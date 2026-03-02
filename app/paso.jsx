@@ -63,6 +63,18 @@ async function updateProgress(id, progress) {
   } catch (e) { /* silent fail for progress saves */ }
 }
 
+async function fetchRoadmapCount() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?select=id`, {
+      method: "HEAD",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, Prefer: "count=exact" },
+    });
+    const range = res.headers.get("content-range");
+    if (range) { const total = range.split("/")[1]; return parseInt(total, 10) || 0; }
+    return 0;
+  } catch { return 0; }
+}
+
 /* ─── SOUND SYSTEM — Minecraft-style ambient ─── */
 let audioReady = false;
 let synths = {};
@@ -1041,22 +1053,23 @@ function QuestionCard({ q, index, selected, onSelect, onExtra }) {
   const [textVal, setTextVal] = useState(selected || "");
   const [showExtra, setShowExtra] = useState(false);
   const [extraText, setExtraText] = useState("");
+  const [extraFocused, setExtraFocused] = useState(false);
 
   const extraField = showExtra ? (
     <div style={{ marginTop: 10, animation: "slideUp 0.4s cubic-bezier(0.16,1,0.3,1) both" }}>
       <textarea value={extraText} placeholder="The more we know, the better your roadmap..."
         onKeyDown={(e) => e.stopPropagation()}
         onChange={(e) => { setExtraText(e.target.value); if (onExtra) onExtra(q.id, e.target.value); }}
-        onFocus={(e) => { e.target.style.border = `2px solid ${ACCENT}`; e.target.style.boxShadow = "0 4px 20px rgba(108,92,231,0.18)"; }}
-        onBlur={(e) => { if (!extraText.trim()) { e.target.style.border = "1.5px solid rgba(108,92,231,0.2)"; e.target.style.boxShadow = "none"; } }}
+        onFocus={(e) => { setExtraFocused(true); }}
+        onBlur={(e) => { setExtraFocused(false); }}
         rows={2}
         style={{
           width: "100%", background: "rgba(255,255,255,0.5)", backdropFilter: "blur(12px)",
-          border: extraText.trim() ? `2px solid ${ACCENT}` : "1.5px solid rgba(108,92,231,0.2)",
+          border: extraFocused ? `2px solid ${ACCENT}` : extraText.trim() ? `1.5px solid ${ACCENT}40` : "1.5px solid rgba(108,92,231,0.2)",
           borderRadius: 12, padding: "10px 14px",
           fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: INK, lineHeight: 1.5,
-          resize: "none", outline: "none", transition: "all 0.3s ease",
-          boxShadow: extraText.trim() ? "0 4px 20px rgba(108,92,231,0.18)" : "none",
+          resize: "none", outline: "none", transition: "all 0.4s ease",
+          boxShadow: extraFocused ? "0 4px 20px rgba(108,92,231,0.18)" : "none",
         }} />
     </div>
   ) : (
@@ -1255,7 +1268,12 @@ export default function PasoLive() {
   const [showNudgeSetup, setShowNudgeSetup] = useState(false);
   const [nudgePhone, setNudgePhone] = useState("");
   const [nudgeSaved, setNudgeSaved] = useState(false);
+  const [nudgeFrequency, setNudgeFrequency] = useState("weekly");
+  const [liveCount, setLiveCount] = useState(null);
   const phaseRefs = useRef([]);
+
+  // Fetch live roadmap count
+  useEffect(() => { fetchRoadmapCount().then((n) => { if (n > 0) setLiveCount(n); }); }, []);
 
   // Check URL for shared roadmap on mount
   useEffect(() => {
@@ -1441,7 +1459,7 @@ export default function PasoLive() {
       await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-        body: JSON.stringify({ nudge_phone: nudgePhone.trim(), nudge_enabled: true }),
+        body: JSON.stringify({ nudge_phone: nudgePhone.trim(), nudge_enabled: true, nudge_frequency: nudgeFrequency }),
       });
       setNudgeSaved(true);
     } catch (e) { console.error("Nudge save error:", e); }
@@ -1452,12 +1470,24 @@ export default function PasoLive() {
     if (!adjustInput.trim() || adjusting) return;
     setAdjusting(true);
     try {
-      const system = `You are Paso, an AI roadmap generator by Numina Labs. The user has an existing roadmap for "${goal}" and wants to adjust it. Their update: "${adjustInput}". Return the FULL updated roadmap JSON in the exact same structure (phases array with title, tagline, milestones, actions, sideQuest, researchNote, researchSource, closingQuote, closingQuoteAuthor). Keep phases and milestones that are still relevant. Adapt, remove, or add phases based on the user's update. Maintain the same quality and depth.`;
-      const userMsg = `Current roadmap:\n${JSON.stringify(roadmap)}\n\nUpdate: ${adjustInput}`;
+      const system = `You are Paso, an AI roadmap generator by Numina Labs. The user has an existing roadmap for "${goal}" and wants to adjust it.
+
+IMPORTANT: First, check if the user's update is actually an adjustment to their existing goal "${goal}" or if they're asking for something completely unrelated (a new goal entirely). If it's a completely new, unrelated goal, respond with exactly: {"error": "NEW_GOAL", "message": "This sounds like a new goal rather than an adjustment. Use 'Set your next goal' instead."}
+
+If it IS a valid adjustment to the existing goal, return the FULL updated roadmap JSON in the exact same structure (phases array with title, tagline, milestones, actions, sideQuest, researchNote, researchSource, closingQuote, closingQuoteAuthor). Keep phases and milestones that are still relevant. Adapt, remove, or add phases based on the user's update. Maintain the same quality and depth. Include a new closingQuote that's relevant to the adjusted plan.`;
+      const userMsg = `Current roadmap:\n${JSON.stringify(roadmap)}\n\nUser's update: ${adjustInput}`;
       const res = await callClaude(system, userMsg, 4096);
       const parsed = JSON.parse(res);
+
+      // Check if AI flagged it as a new goal
+      if (parsed.error === "NEW_GOAL") {
+        setError(parsed.message || "This sounds like a new goal. Try 'Set your next goal' instead.");
+        setTimeout(() => setError(null), 4000);
+        setAdjusting(false);
+        return;
+      }
+
       if (parsed.phases) {
-        // Keep checked milestones that map to surviving phases
         const newChecked = {};
         Object.entries(checkedMilestones).forEach(([key, val]) => {
           if (val) {
@@ -1473,7 +1503,6 @@ export default function PasoLive() {
         setAdjustInput("");
         if (shareId) {
           updateProgress(shareId, newChecked);
-          // Update roadmap in Supabase too
           try {
             await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
               method: "PATCH",
@@ -1849,7 +1878,7 @@ export default function PasoLive() {
             {/* ── Counter + Footer ── */}
             <div style={{ marginTop: mob ? "14vh" : "18vh", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", animation: "fadeIn 1.5s ease 1.2s both" }}>
               <Glass style={{ padding: mob ? "28px 32px" : "32px 40px", display: "flex", alignItems: "center", gap: 18, marginBottom: 72 }}>
-                <span style={{ fontFamily: H, fontSize: 36, fontWeight: 400, color: INK }}>2,847</span>
+                <span style={{ fontFamily: H, fontSize: 36, fontWeight: 400, color: INK }}>{liveCount !== null ? liveCount.toLocaleString() : "—"}</span>
                 <span style={{ ...B, fontSize: 14, color: INK30, lineHeight: 1.4, textAlign: "left" }}>roadmaps<br />generated</span>
               </Glass>
 
@@ -2401,16 +2430,29 @@ export default function PasoLive() {
                 ...M, fontSize: 12, width: "100%", padding: "14px 20px", borderRadius: 14,
                 border: `1px dashed ${ACCENT}30`, cursor: "pointer",
                 background: "transparent", color: ACCENT, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              }}>{Icon.bell(14, ACCENT)} Set up weekly check-ins</button>
+              }}>{Icon.bell(14, ACCENT)} Set up accountability nudges</button>
             )}
 
             {showNudgeSetup && !nudgeSaved && (
               <div style={{ animation: "slideUp 0.3s ease both" }}>
-                <div style={{ ...M, fontSize: 11, color: ACCENT, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{Icon.bell(14, ACCENT)} Weekly check-in nudges</div>
-                <p style={{ ...B, fontSize: 12, color: INK30, lineHeight: 1.5, marginBottom: 12 }}>
-                  Every Monday, Paso will message you with 2-3 milestones to focus on this week — plus a link to check them off.
+                <div style={{ ...M, fontSize: 11, color: ACCENT, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{Icon.bell(14, ACCENT)} Accountability nudges</div>
+                <p style={{ ...B, fontSize: 12, color: INK30, lineHeight: 1.5, marginBottom: 14 }}>
+                  Paso will message you with 2-3 milestones to focus on, a motivational quote, and a link to check them off. Stay on track without thinking about it.
                 </p>
-                <div style={{ display: "flex", gap: 8 }}>
+
+                {/* Frequency picker */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                  {[["weekly", "Every Monday"], ["biweekly", "Every 2 weeks"], ["monthly", "Monthly"]].map(([val, label]) => (
+                    <button key={val} onClick={() => setNudgeFrequency(val)} style={{
+                      ...M, fontSize: 11, padding: "8px 14px", borderRadius: 10, cursor: "pointer", transition: "all 0.2s ease",
+                      border: nudgeFrequency === val ? `1.5px solid ${ACCENT}` : "1px solid rgba(26,26,46,0.06)",
+                      background: nudgeFrequency === val ? `${ACCENT}10` : "rgba(255,255,255,0.5)",
+                      color: nudgeFrequency === val ? ACCENT : INK30,
+                    }}>{label}</button>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
                   <input
                     value={nudgePhone} onChange={(e) => setNudgePhone(e.target.value)}
                     placeholder="WhatsApp number (+31 6...)"
@@ -2421,13 +2463,22 @@ export default function PasoLive() {
                     background: nudgePhone.trim() ? ACCENT : "rgba(26,26,46,0.06)", color: nudgePhone.trim() ? "#fff" : INK25, cursor: nudgePhone.trim() ? "pointer" : "default",
                   }}>Save</button>
                 </div>
+
+                <p style={{ ...B, fontSize: 10, color: INK22, lineHeight: 1.5 }}>
+                  You can unsubscribe anytime by replying STOP. We'll send you a message to confirm it works.
+                </p>
               </div>
             )}
 
             {nudgeSaved && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderRadius: 12, background: "rgba(85,239,196,0.08)", border: "1px solid rgba(85,239,196,0.15)" }}>
-                {Icon.check(14, "#00b894")}
-                <span style={{ ...B, fontSize: 12, color: "#00b894" }}>Weekly nudges set up! We'll message you every Monday.</span>
+              <div style={{ padding: "14px 16px", borderRadius: 12, background: "rgba(85,239,196,0.08)", border: "1px solid rgba(85,239,196,0.15)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  {Icon.check(14, "#00b894")}
+                  <span style={{ ...M, fontSize: 12, color: "#00b894" }}>Nudges activated!</span>
+                </div>
+                <p style={{ ...B, fontSize: 11, color: INK30, lineHeight: 1.5 }}>
+                  {nudgeFrequency === "weekly" ? "Every Monday" : nudgeFrequency === "biweekly" ? "Every other Monday" : "First Monday of the month"}, you'll get a message with your next milestones + a motivational quote. Reply STOP anytime to unsubscribe.
+                </p>
               </div>
             )}
           </div>
@@ -2456,9 +2507,15 @@ export default function PasoLive() {
             </div>
 
             <h3 style={{ fontFamily: H, fontSize: 22, fontWeight: 400, color: INK, marginBottom: 8 }}>Things changed?</h3>
-            <p style={{ ...B, fontSize: 13, color: INK30, lineHeight: 1.6, marginBottom: 20 }}>
+            <p style={{ ...B, fontSize: 13, color: INK30, lineHeight: 1.6, marginBottom: 16 }}>
               Tell Paso what's different. Your plan will adapt while keeping the progress you've already made.
             </p>
+
+            {error && (
+              <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(232,93,117,0.08)", border: "1px solid rgba(232,93,117,0.15)", marginBottom: 14 }}>
+                <span style={{ ...B, fontSize: 12, color: "rgba(232,93,117,0.8)" }}>{error}</span>
+              </div>
+            )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -2489,9 +2546,15 @@ export default function PasoLive() {
               {adjusting ? "Adjusting your roadmap..." : "Adjust my roadmap →"}
             </button>
 
+            {!adjusting && adjustInput.trim() && (
+              <div style={{ marginTop: 8, ...B, fontSize: 11, color: INK22, textAlign: "center" }}>
+                This usually takes about 20-30 seconds
+              </div>
+            )}
+
             {adjusting && (
               <div style={{ marginTop: 12, ...B, fontSize: 12, color: INK25, textAlign: "center" }}>
-                Paso is rethinking your plan while keeping your progress...
+                Paso is rethinking your plan while keeping your progress... ~20s
               </div>
             )}
           </div>

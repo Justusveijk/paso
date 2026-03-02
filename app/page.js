@@ -1,4 +1,5 @@
-import Callis from "./callis";
+import Paso from "./paso";
+
 export default function Home() {
-  return <Callis />;
+  return <Paso />;
 }
