@@ -427,6 +427,21 @@ const Icon = {
   bookmark: (sz = 12, c = "currentColor") => (
     <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><path d="M3 2.5A1.5 1.5 0 014.5 1h7A1.5 1.5 0 0113 2.5v12L8 11l-5 3.5V2.5z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/></svg>
   ),
+  whatsapp: (sz = 16, c = "currentColor") => (
+    <svg width={sz} height={sz} viewBox="0 0 24 24" fill={c}><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+  ),
+  message: (sz = 14, c = "currentColor") => (
+    <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v8a1 1 0 01-1 1H5l-3 3V3z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/></svg>
+  ),
+  adjust: (sz = 14, c = "currentColor") => (
+    <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><path d="M2 4h3m3 0h6M2 8h6m3 0h3M2 12h1m3 0h8" stroke={c} strokeWidth="1.3" strokeLinecap="round"/><circle cx="7.5" cy="4" r="1.5" stroke={c} strokeWidth="1.2"/><circle cx="10.5" cy="8" r="1.5" stroke={c} strokeWidth="1.2"/><circle cx="5" cy="12" r="1.5" stroke={c} strokeWidth="1.2"/></svg>
+  ),
+  bell: (sz = 14, c = "currentColor") => (
+    <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><path d="M4 6a4 4 0 018 0c0 2.5 1 4 2 5H2c1-1 2-2.5 2-5z" stroke={c} strokeWidth="1.2" strokeLinejoin="round"/><path d="M6 11v.5a2 2 0 004 0V11" stroke={c} strokeWidth="1.2" strokeLinecap="round"/></svg>
+  ),
+  clipboard: (sz = 14, c = "currentColor") => (
+    <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="11" rx="1.5" stroke={c} strokeWidth="1.2"/><path d="M6 1.5h4a.5.5 0 01.5.5v1a.5.5 0 01-.5.5H6a.5.5 0 01-.5-.5V2a.5.5 0 01.5-.5z" stroke={c} strokeWidth="1.1"/></svg>
+  ),
 };
 
 /* ─── PASO LOADING ORB ─── */
@@ -1228,9 +1243,18 @@ export default function PasoLive() {
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [shareId, setShareId] = useState(null);
-  const [shareStatus, setShareStatus] = useState(""); // "", "saving", "copied", "error"
+  const [shareStatus, setShareStatus] = useState(""); // "", "saved", "copied", "error"
+  const [showSharePopup, setShowSharePopup] = useState(false);
   const [isSharedView, setIsSharedView] = useState(false);
   const [showInstallTip, setShowInstallTip] = useState(false);
+  // Adjust roadmap
+  const [showAdjust, setShowAdjust] = useState(false);
+  const [adjustInput, setAdjustInput] = useState("");
+  const [adjusting, setAdjusting] = useState(false);
+  // Weekly nudge
+  const [showNudgeSetup, setShowNudgeSetup] = useState(false);
+  const [nudgePhone, setNudgePhone] = useState("");
+  const [nudgeSaved, setNudgeSaved] = useState(false);
   const phaseRefs = useRef([]);
 
   // Check URL for shared roadmap on mount
@@ -1367,30 +1391,105 @@ export default function PasoLive() {
     if (window.location.hash) window.location.hash = "";
   };
 
-  const handleShare = async () => {
-    if (shareId) {
-      // Already saved — update progress then copy link
-      updateProgress(shareId, checkedMilestones);
-      const link = `${window.location.origin}${window.location.pathname}#/r/${shareId}`;
-      try { await navigator.clipboard.writeText(link); } catch { /* fallback below */ }
-      setShareStatus("copied");
-      setTimeout(() => setShareStatus(""), 2500);
-      return;
-    }
+  const handleSave = async () => {
+    if (shareId) { setShowSharePopup(true); return; }
     setShareStatus("saving");
     try {
       const id = await saveRoadmap(roadmap, Object.values(answers), goal);
       setShareId(id);
-      const link = `${window.location.origin}${window.location.pathname}#/r/${id}`;
       window.location.hash = `/r/${id}`;
-      try { await navigator.clipboard.writeText(link); } catch { /* clipboard may fail on mobile */ }
-      setShareStatus("copied");
-      setTimeout(() => setShareStatus(""), 2500);
+      setShareStatus("saved");
+      setTimeout(() => setShowSharePopup(true), 400);
     } catch (e) {
-      console.error("Share error:", e);
+      console.error("Save error:", e);
       setShareStatus("error");
       setTimeout(() => setShareStatus(""), 3000);
     }
+  };
+
+  const getShareLink = () => {
+    if (!shareId) return "";
+    return `${window.location.origin}${window.location.pathname}#/r/${shareId}`;
+  };
+
+  const copyLink = async () => {
+    const link = getShareLink();
+    try { await navigator.clipboard.writeText(link); } catch {}
+    setShareStatus("copied");
+    setTimeout(() => setShareStatus(""), 2500);
+  };
+
+  const shareWhatsApp = () => {
+    const link = getShareLink();
+    const text = `Check out my ${goal} roadmap on Paso! Track my progress and keep me accountable 💪\n${link}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  };
+
+  const shareText = () => {
+    const link = getShareLink();
+    const text = `Check out my ${goal} roadmap on Paso! ${link}`;
+    if (navigator.share) {
+      navigator.share({ title: `My ${goal} roadmap — Paso`, text, url: link }).catch(() => {});
+    } else {
+      window.open(`sms:?body=${encodeURIComponent(text)}`, "_blank");
+    }
+  };
+
+  const handleNudgeSave = async () => {
+    if (!nudgePhone.trim() || !shareId) return;
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+        body: JSON.stringify({ nudge_phone: nudgePhone.trim(), nudge_enabled: true }),
+      });
+      setNudgeSaved(true);
+    } catch (e) { console.error("Nudge save error:", e); }
+  };
+
+  // Adjust roadmap — send changes to AI
+  const handleAdjust = async () => {
+    if (!adjustInput.trim() || adjusting) return;
+    setAdjusting(true);
+    try {
+      const system = `You are Paso, an AI roadmap generator by Numina Labs. The user has an existing roadmap for "${goal}" and wants to adjust it. Their update: "${adjustInput}". Return the FULL updated roadmap JSON in the exact same structure (phases array with title, tagline, milestones, actions, sideQuest, researchNote, researchSource, closingQuote, closingQuoteAuthor). Keep phases and milestones that are still relevant. Adapt, remove, or add phases based on the user's update. Maintain the same quality and depth.`;
+      const userMsg = `Current roadmap:\n${JSON.stringify(roadmap)}\n\nUpdate: ${adjustInput}`;
+      const res = await callClaude(system, userMsg, 4096);
+      const parsed = JSON.parse(res);
+      if (parsed.phases) {
+        // Keep checked milestones that map to surviving phases
+        const newChecked = {};
+        Object.entries(checkedMilestones).forEach(([key, val]) => {
+          if (val) {
+            const [pi, mi] = key.split("-").map(Number);
+            if (parsed.phases[pi] && parsed.phases[pi].milestones[mi]) {
+              newChecked[key] = true;
+            }
+          }
+        });
+        setRoadmap(parsed);
+        setCheckedMilestones(newChecked);
+        setShowAdjust(false);
+        setAdjustInput("");
+        if (shareId) {
+          updateProgress(shareId, newChecked);
+          // Update roadmap in Supabase too
+          try {
+            await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
+              body: JSON.stringify({ roadmap: parsed, progress: newChecked }),
+            });
+          } catch {}
+        }
+        if (soundEnabled) playUnlockSound();
+      }
+    } catch (e) {
+      console.error("Adjust error:", e);
+      setError("Couldn't adjust roadmap. Try again.");
+      setTimeout(() => setError(null), 3000);
+    }
+    setAdjusting(false);
   };
 
   const handleUnlock = () => {
@@ -2003,13 +2102,17 @@ export default function PasoLive() {
 
                 <Reveal delay={0.36}>
                   <div style={{ display: "flex", flexDirection: mob ? "column" : "row", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
-                    <button onClick={handleShare}
-                      style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: shareStatus === "copied" ? "rgba(85,239,196,0.12)" : "rgba(255,255,255,0.4)", backdropFilter: "blur(16px)", border: shareStatus === "copied" ? "1px solid rgba(85,239,196,0.3)" : "1px solid rgba(255,255,255,0.5)", color: shareStatus === "copied" ? "#00b894" : INK40, cursor: "pointer", transition: "all 0.3s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                      {shareStatus === "saving" ? "Saving..." : shareStatus === "copied" ? "Link copied!" : shareStatus === "error" ? "Failed — try again" : shareId ? "Copy link" : <>{Icon.share(14, INK40)} Save & share</>}
+                    <button onClick={handleSave}
+                      style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: shareStatus === "copied" ? "rgba(85,239,196,0.12)" : shareStatus === "saved" ? "rgba(108,92,231,0.08)" : "rgba(255,255,255,0.4)", backdropFilter: "blur(16px)", border: shareStatus === "copied" ? "1px solid rgba(85,239,196,0.3)" : shareStatus === "saved" ? `1px solid ${ACCENT}30` : "1px solid rgba(255,255,255,0.5)", color: shareStatus === "copied" ? "#00b894" : shareStatus === "saved" ? ACCENT : INK40, cursor: "pointer", transition: "all 0.3s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                      {shareStatus === "saving" ? "Saving..." : shareStatus === "error" ? "Failed — try again" : shareStatus === "copied" ? "Link copied!" : shareId ? <>{Icon.share(14, ACCENT)} Share</> : <>{Icon.bookmark(14, INK40)} Save</>}
                     </button>
                     <button onClick={exportPDF}
                       style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: "rgba(255,255,255,0.4)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.5)", color: INK40, cursor: "pointer", transition: "all 0.3s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {Icon.doc(14, INK40)} Export as PDF
+                    </button>
+                    <button onClick={() => setShowAdjust(true)}
+                      style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: "rgba(255,255,255,0.4)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.5)", color: INK40, cursor: "pointer", transition: "all 0.3s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                      {Icon.adjust(14, INK40)} Adjust plan
                     </button>
                     {allComplete ? (
                       <button onClick={() => { handleReset(); }}
@@ -2098,9 +2201,9 @@ export default function PasoLive() {
                   )}
 
                   <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 1.2s both", display: "flex", flexDirection: mob ? "column" : "row", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                    <button onClick={handleShare}
+                    <button onClick={handleSave}
                       style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: shareStatus === "copied" ? "rgba(85,239,196,0.12)" : "rgba(255,255,255,0.5)", backdropFilter: "blur(16px)", border: shareStatus === "copied" ? "1px solid rgba(85,239,196,0.3)" : "1px solid rgba(255,255,255,0.6)", color: shareStatus === "copied" ? "#00b894" : INK40, cursor: "pointer", width: mob ? "100%" : "auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                      {shareStatus === "copied" ? "Link copied!" : shareId ? "Copy link" : <>{Icon.share(14, INK40)} Share</>}
+                      {shareStatus === "copied" ? "Link copied!" : shareId ? <>{Icon.share(14, ACCENT)} Share</> : <>{Icon.bookmark(14, INK40)} Save</>}
                     </button>
                     <button onClick={exportPDF}
                       style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: "rgba(255,255,255,0.5)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.6)", color: INK40, cursor: "pointer", width: mob ? "100%" : "auto" }}>
@@ -2233,6 +2336,164 @@ export default function PasoLive() {
               onMouseLeave={(e) => e.target.style.transform = "translateY(0)"}>
               Personalize this roadmap →
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ━━━ SHARE POPUP ━━━ */}
+      {showSharePopup && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1100,
+          background: "rgba(26,26,46,0.35)", backdropFilter: "blur(12px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: mob ? 20 : 40, animation: "fadeIn 0.25s ease both",
+        }} onClick={() => setShowSharePopup(false)}>
+          <div style={{
+            background: "rgba(255,255,255,0.88)", backdropFilter: "blur(24px)",
+            border: "1px solid rgba(255,255,255,0.6)", borderRadius: 24,
+            padding: mob ? "28px 24px" : "36px 40px", maxWidth: 440, width: "100%",
+            boxShadow: "0 24px 80px rgba(0,0,0,0.12)",
+            animation: "slideUp 0.4s cubic-bezier(0.16,1,0.3,1) both",
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: ACCENT }}>Share your roadmap</div>
+              <button onClick={() => setShowSharePopup(false)} style={{ background: "none", border: "none", cursor: "pointer" }}>{Icon.close(14, INK25)}</button>
+            </div>
+
+            <h3 style={{ fontFamily: H, fontSize: 22, fontWeight: 400, color: INK, marginBottom: 8 }}>Keep each other accountable</h3>
+            <p style={{ ...B, fontSize: 13, color: INK30, lineHeight: 1.6, marginBottom: 28 }}>
+              Share your roadmap with friends so they can track your progress — and you can track theirs. Accountability makes the difference between planning and doing.
+            </p>
+
+            {/* Share options */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+              <button onClick={() => { shareWhatsApp(); }} style={{
+                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "none", cursor: "pointer",
+                background: "#25D366", color: "#fff", display: "flex", alignItems: "center", gap: 10, transition: "all 0.2s ease",
+              }}>{Icon.whatsapp(18, "#fff")} Share on WhatsApp</button>
+
+              <button onClick={shareText} style={{
+                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "1px solid rgba(26,26,46,0.08)", cursor: "pointer",
+                background: "rgba(255,255,255,0.6)", color: INK60, display: "flex", alignItems: "center", gap: 10, transition: "all 0.2s ease",
+              }}>{Icon.message(16, INK40)} Share via text</button>
+
+              <button onClick={copyLink} style={{
+                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "1px solid rgba(26,26,46,0.08)", cursor: "pointer",
+                background: shareStatus === "copied" ? "rgba(85,239,196,0.1)" : "rgba(255,255,255,0.6)",
+                color: shareStatus === "copied" ? "#00b894" : INK60,
+                display: "flex", alignItems: "center", gap: 10, transition: "all 0.2s ease",
+              }}>{Icon.clipboard(16, shareStatus === "copied" ? "#00b894" : INK40)} {shareStatus === "copied" ? "Link copied!" : "Copy link"}</button>
+            </div>
+
+            {/* Add to homescreen — mobile only */}
+            {mob && (
+              <div style={{ padding: "14px 16px", borderRadius: 12, background: "rgba(108,92,231,0.04)", border: "1px solid rgba(108,92,231,0.08)", marginBottom: 20 }}>
+                <div style={{ ...M, fontSize: 11, color: ACCENT, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{Icon.bookmark(12, ACCENT)} Add to homescreen</div>
+                <p style={{ ...B, fontSize: 12, color: INK30, lineHeight: 1.5 }}>
+                  Tap the share button (□↑) in Safari or ⋮ in Chrome → "Add to Home Screen" to come back anytime.
+                </p>
+              </div>
+            )}
+
+            {/* Weekly nudge opt-in */}
+            {!showNudgeSetup && !nudgeSaved && (
+              <button onClick={() => setShowNudgeSetup(true)} style={{
+                ...M, fontSize: 12, width: "100%", padding: "14px 20px", borderRadius: 14,
+                border: `1px dashed ${ACCENT}30`, cursor: "pointer",
+                background: "transparent", color: ACCENT, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}>{Icon.bell(14, ACCENT)} Set up weekly check-ins</button>
+            )}
+
+            {showNudgeSetup && !nudgeSaved && (
+              <div style={{ animation: "slideUp 0.3s ease both" }}>
+                <div style={{ ...M, fontSize: 11, color: ACCENT, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{Icon.bell(14, ACCENT)} Weekly check-in nudges</div>
+                <p style={{ ...B, fontSize: 12, color: INK30, lineHeight: 1.5, marginBottom: 12 }}>
+                  Every Monday, Paso will message you with 2-3 milestones to focus on this week — plus a link to check them off.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    value={nudgePhone} onChange={(e) => setNudgePhone(e.target.value)}
+                    placeholder="WhatsApp number (+31 6...)"
+                    style={{ flex: 1, ...B, fontSize: 14, padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(26,26,46,0.08)", background: "rgba(255,255,255,0.7)", outline: "none" }}
+                  />
+                  <button onClick={handleNudgeSave} style={{
+                    ...M, fontSize: 11, padding: "12px 20px", borderRadius: 12, border: "none",
+                    background: nudgePhone.trim() ? ACCENT : "rgba(26,26,46,0.06)", color: nudgePhone.trim() ? "#fff" : INK25, cursor: nudgePhone.trim() ? "pointer" : "default",
+                  }}>Save</button>
+                </div>
+              </div>
+            )}
+
+            {nudgeSaved && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderRadius: 12, background: "rgba(85,239,196,0.08)", border: "1px solid rgba(85,239,196,0.15)" }}>
+                {Icon.check(14, "#00b894")}
+                <span style={{ ...B, fontSize: 12, color: "#00b894" }}>Weekly nudges set up! We'll message you every Monday.</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ━━━ ADJUST ROADMAP OVERLAY ━━━ */}
+      {showAdjust && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1100,
+          background: "rgba(26,26,46,0.35)", backdropFilter: "blur(12px)",
+          display: "flex", alignItems: mob ? "flex-end" : "center", justifyContent: "center",
+          padding: mob ? 0 : 40, animation: "fadeIn 0.25s ease both",
+        }} onClick={() => !adjusting && setShowAdjust(false)}>
+          <div style={{
+            background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)",
+            border: "1px solid rgba(255,255,255,0.6)",
+            borderRadius: mob ? "24px 24px 0 0" : 24,
+            padding: mob ? "28px 24px 36px" : "36px 40px", maxWidth: 500, width: "100%",
+            boxShadow: "0 -8px 40px rgba(0,0,0,0.08)",
+            animation: mob ? "slideUp 0.4s cubic-bezier(0.16,1,0.3,1) both" : "slideUp 0.4s cubic-bezier(0.16,1,0.3,1) both",
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: ACCENT, display: "flex", alignItems: "center", gap: 6 }}>{Icon.adjust(12, ACCENT)} Adjust your roadmap</div>
+              <button onClick={() => setShowAdjust(false)} style={{ background: "none", border: "none", cursor: "pointer" }}>{Icon.close(14, INK25)}</button>
+            </div>
+
+            <h3 style={{ fontFamily: H, fontSize: 22, fontWeight: 400, color: INK, marginBottom: 8 }}>Things changed?</h3>
+            <p style={{ ...B, fontSize: 13, color: INK30, lineHeight: 1.6, marginBottom: 20 }}>
+              Tell Paso what's different. Your plan will adapt while keeping the progress you've already made.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {["I got injured", "Timeline changed", "Got a mentor", "Budget shifted", "New opportunity"].map((s) => (
+                  <button key={s} onClick={() => setAdjustInput(s + " — ")}
+                    style={{ ...M, fontSize: 10, padding: "6px 12px", borderRadius: 20, border: "1px solid rgba(26,26,46,0.06)", background: "rgba(255,255,255,0.5)", color: INK30, cursor: "pointer" }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={adjustInput} onChange={(e) => setAdjustInput(e.target.value)}
+                placeholder="E.g. I got injured and can't run for 3 weeks, or I found a co-founder who handles marketing..."
+                rows={3}
+                style={{ ...B, fontSize: 14, padding: "14px 16px", borderRadius: 14, border: `1px solid ${adjustInput.trim() ? ACCENT + "30" : "rgba(26,26,46,0.08)"}`, background: "rgba(255,255,255,0.7)", outline: "none", resize: "none", transition: "border 0.3s ease", lineHeight: 1.5 }}
+              />
+            </div>
+
+            <button onClick={handleAdjust} disabled={!adjustInput.trim() || adjusting}
+              style={{
+                ...M, fontSize: 12, letterSpacing: "0.04em", width: "100%", padding: "14px 24px",
+                borderRadius: 14, border: "none", cursor: adjustInput.trim() && !adjusting ? "pointer" : "default",
+                background: adjustInput.trim() && !adjusting ? ACCENT : "rgba(26,26,46,0.06)",
+                color: adjustInput.trim() && !adjusting ? "#fff" : INK25,
+                transition: "all 0.3s ease",
+                boxShadow: adjustInput.trim() && !adjusting ? "0 4px 20px rgba(108,92,231,0.25)" : "none",
+              }}>
+              {adjusting ? "Adjusting your roadmap..." : "Adjust my roadmap →"}
+            </button>
+
+            {adjusting && (
+              <div style={{ marginTop: 12, ...B, fontSize: 12, color: INK25, textAlign: "center" }}>
+                Paso is rethinking your plan while keeping your progress...
+              </div>
+            )}
           </div>
         </div>
       )}
