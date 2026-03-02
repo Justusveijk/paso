@@ -13,6 +13,21 @@ function generateId() {
   return id;
 }
 
+/* ─── INPUT SANITIZATION ─── */
+function sanitize(str, maxLen = 2000) {
+  if (typeof str !== "string") return "";
+  return str
+    .replace(/<[^>]*>/g, "")      // strip HTML tags
+    .replace(/[^\x20-\x7E\u00C0-\u024F\u0370-\u03FF\u2000-\u206F\u2190-\u21FF\n\r\t ]/g, "") // allow basic chars + accents + common unicode
+    .trim()
+    .slice(0, maxLen);
+}
+
+function sanitizePhone(str) {
+  if (typeof str !== "string") return "";
+  return str.replace(/[^0-9+\-() ]/g, "").trim().slice(0, 20);
+}
+
 async function saveRoadmap(roadmapData, answersData, goalText, retries = 2) {
   const id = generateId();
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -25,7 +40,7 @@ async function saveRoadmap(roadmapData, answersData, goalText, retries = 2) {
           Authorization: `Bearer ${SUPABASE_KEY}`,
           Prefer: "return=representation",
         },
-        body: JSON.stringify({ id, goal: goalText, roadmap: roadmapData, answers: answersData, progress: {} }),
+        body: JSON.stringify({ id, goal: sanitize(goalText, 500), roadmap: roadmapData, answers: answersData, progress: {} }),
       });
       if (!res.ok) {
         const err = await res.text().catch(() => "");
@@ -545,24 +560,18 @@ const INK08 = "rgba(26,26,46,0.1)";
 /* ─── API ─── */
 async function callClaude(system, userMsg, maxTokens = 1024, _retry = true) {
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("/api/generate", {
       method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "x-api-key": process.env.NEXT_PUBLIC_ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: "user", content: userMsg }],
+        system: sanitize(system, 4000),
+        userMsg: sanitize(userMsg, 12000),
+        maxTokens,
       }),
     });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      throw new Error(errData?.error?.message || `API error: ${res.status}`);
+      throw new Error(errData?.error || `API error: ${res.status}`);
     }
     const data = await res.json();
     const text = data.content.map((c) => c.text || "").join("");
@@ -1376,7 +1385,7 @@ export default function PasoLive() {
   const handleGoal = async () => {
     if (!inputValue.trim()) return;
     if (soundEnabled) initAudio();
-    setGoal(inputValue.trim()); setStep("loadingQ"); setError(null);
+    setGoal(sanitize(inputValue, 500)); setStep("loadingQ"); setError(null);
     try {
       const data = await generateQuestions(inputValue.trim());
       setQuestions(data.questions); setQuestionsIntro(data.intro); setStep("questions");
@@ -1459,7 +1468,7 @@ export default function PasoLive() {
       await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-        body: JSON.stringify({ nudge_phone: nudgePhone.trim(), nudge_enabled: true, nudge_frequency: nudgeFrequency }),
+        body: JSON.stringify({ nudge_phone: sanitizePhone(nudgePhone), nudge_enabled: true, nudge_frequency: nudgeFrequency }),
       });
       setNudgeSaved(true);
     } catch (e) { console.error("Nudge save error:", e); }
@@ -2487,9 +2496,17 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                   {Icon.check(14, "#00b894")}
                   <span style={{ ...M, fontSize: 12, color: "#00b894" }}>Nudges activated!</span>
                 </div>
-                <p style={{ ...B, fontSize: 11, color: INK30, lineHeight: 1.5 }}>
+                <p style={{ ...B, fontSize: 11, color: INK30, lineHeight: 1.5, marginBottom: 10 }}>
                   {nudgeFrequency === "weekly" ? "Every Monday" : nudgeFrequency === "biweekly" ? "Every other Monday" : "First Monday of the month"}, you'll get a message with your next milestones + a motivational quote. Reply STOP anytime to unsubscribe.
                 </p>
+                <button onClick={() => {
+                  const testMsg = `Hey! 👋 This is a test from Paso.\n\nYour goal: ${goal}\n\nThis week, focus on:\n✅ ${roadmap?.phases?.[0]?.milestones?.[0] || "Your first milestone"}\n✅ ${roadmap?.phases?.[0]?.milestones?.[1] || "Your second milestone"}\n\n💬 "The path is made by walking." — Antonio Machado\n\nCheck your progress → ${getShareLink() || window.location.href}`;
+                  window.open(`https://wa.me/${nudgePhone.replace(/[^0-9+]/g, "")}?text=${encodeURIComponent(testMsg)}`, "_blank");
+                }} style={{
+                  ...M, fontSize: 11, width: "100%", padding: "10px 16px", borderRadius: 10, cursor: "pointer",
+                  border: "1px solid rgba(37,211,102,0.2)", background: "rgba(37,211,102,0.06)", color: "#25D366",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                }}>{Icon.whatsapp(14, "#25D366")} Send test message</button>
               </div>
             )}
           </div>
