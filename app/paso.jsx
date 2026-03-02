@@ -1476,8 +1476,8 @@ IMPORTANT: First, check if the user's update is actually an adjustment to their 
 
 If it IS a valid adjustment to the existing goal, return the FULL updated roadmap JSON in the exact same structure (phases array with title, tagline, milestones, actions, sideQuest, researchNote, researchSource, closingQuote, closingQuoteAuthor). Keep phases and milestones that are still relevant. Adapt, remove, or add phases based on the user's update. Maintain the same quality and depth. Include a new closingQuote that's relevant to the adjusted plan.`;
       const userMsg = `Current roadmap:\n${JSON.stringify(roadmap)}\n\nUser's update: ${adjustInput}`;
-      const res = await callClaude(system, userMsg, 4096);
-      const parsed = JSON.parse(res);
+      const res = await callClaude(system, userMsg, 6000);
+      const parsed = res; // callClaude already returns parsed JSON
 
       // Check if AI flagged it as a new goal
       if (parsed.error === "NEW_GOAL") {
@@ -2464,7 +2464,18 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                   }}>Save</button>
                 </div>
 
-                <p style={{ ...B, fontSize: 10, color: INK22, lineHeight: 1.5 }}>
+                {nudgePhone.trim() && (
+                  <button onClick={() => {
+                    const testMsg = `Hey! 👋 This is a test from Paso.\n\nYour goal: ${goal}\n\nThis week, focus on:\n✅ ${roadmap?.phases?.[0]?.milestones?.[0] || "Your first milestone"}\n✅ ${roadmap?.phases?.[0]?.milestones?.[1] || "Your second milestone"}\n\n💬 "The path is made by walking." — Antonio Machado\n\nCheck your progress → ${getShareLink() || window.location.href}`;
+                    window.open(`https://wa.me/${nudgePhone.replace(/[^0-9+]/g, "")}?text=${encodeURIComponent(testMsg)}`, "_blank");
+                  }} style={{
+                    ...M, fontSize: 11, width: "100%", marginTop: 8, padding: "10px 16px", borderRadius: 10, cursor: "pointer",
+                    border: "1px solid rgba(37,211,102,0.2)", background: "rgba(37,211,102,0.06)", color: "#25D366",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                  }}>{Icon.whatsapp(14, "#25D366")} Send test message</button>
+                )}
+
+                <p style={{ ...B, fontSize: 10, color: INK22, lineHeight: 1.5, marginTop: 8 }}>
                   You can unsubscribe anytime by replying STOP. We'll send you a message to confirm it works.
                 </p>
               </div>
