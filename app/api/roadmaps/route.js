@@ -2,6 +2,33 @@
 // All Supabase operations proxied through here.
 // Frontend never sees SUPABASE_URL or SUPABASE_KEY.
 
+/* ─── ANIMO DATA HOOKS (scaffold) ───
+ * The following roadmap fields will be shared with or expanded in Animo
+ * (the full psychology app that Paso feeds into):
+ *
+ * - meaning_statement  → derived from goal + answers; will map to Animo's
+ *                         core "personal meaning" construct for longitudinal tracking
+ * - roadmap_steps      → phases[].milestones; Animo will expand these into
+ *                         micro-interventions with CBT/ACT framing
+ * - completion_rate    → computed from progress object (checked / total milestones);
+ *                         Animo will track this over time for behavioral trends
+ * - session_frequency  → derived from created_at + progress save timestamps;
+ *                         Animo will use this for engagement modeling
+ * - notification_engagement → nudge_enabled + nudge_last_sent + push open tracking;
+ *                              Animo will expand with adaptive notification timing
+ *
+ * Current Supabase schema (roadmaps table):
+ *   id, goal, roadmap, roadmap_json, answers, progress, user_name,
+ *   push_subscription, nudge_enabled, nudge_frequency, nudge_last_sent, created_at
+ *
+ * When building Animo's schema, add:
+ *   - user_id (FK to auth.users — Paso has no auth, Animo will)
+ *   - meaning_statement (text, extracted from goal + answer synthesis)
+ *   - session_log (jsonb[], timestamped engagement events)
+ *   - notification_opens (int, track push tap-throughs)
+ *   - therapist_notes (text, for Animo's professional layer)
+ * ─────────────────────────────────────────────────────── */
+
 import { NextResponse } from "next/server";
 import { apiGuard, handleCORS } from "@/lib/api-guard";
 

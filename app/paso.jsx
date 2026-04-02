@@ -599,6 +599,15 @@ const H = "'Playfair Display', Georgia, serif";
 const M = { fontFamily: "'JetBrains Mono', monospace" };
 const B = { fontFamily: "'DM Sans', sans-serif" };
 const ACCENT = "#6C5CE7";
+
+/* ─── BACKGROUND THEMES ─── */
+const BG_THEMES = [
+  { id: "lavender", name: "Lavender", bg: "linear-gradient(135deg, #e8dff5 0%, #f5e6d3 15%, #d4e4f7 35%, #f0d9e8 55%, #dbecd4 75%, #e8dff5 100%)", solid: "#e8dff5" },
+  { id: "sand", name: "Warm Sand", bg: "linear-gradient(135deg, #f5efe6 0%, #ede4d4 25%, #f0e8d8 50%, #e8dcc8 75%, #f5efe6 100%)", solid: "#f5efe6" },
+  { id: "slate", name: "Deep Slate", bg: "linear-gradient(135deg, #2d3436 0%, #353b48 25%, #2f3640 50%, #3d4452 75%, #2d3436 100%)", solid: "#2d3436", dark: true },
+  { id: "sage", name: "Muted Sage", bg: "linear-gradient(135deg, #dfe6da 0%, #e4ded4 20%, #d8e2d0 45%, #e0d8ce 70%, #dfe6da 100%)", solid: "#dfe6da" },
+  { id: "navy", name: "Soft Navy", bg: "linear-gradient(135deg, #2c3e6b 0%, #34496e 25%, #2e4268 50%, #384d72 75%, #2c3e6b 100%)", solid: "#2c3e6b", dark: true },
+];
 const INK = "#1a1a2e";
 const INK70 = "rgba(26,26,46,0.75)";
 const INK60 = "rgba(26,26,46,0.65)";
@@ -637,7 +646,7 @@ async function callAPI(action, data, _retry = true) {
       return callAPI(action, data, false);
     }
     console.error("API failed after retry:", e.message);
-    throw new Error("Something went wrong. Please try again.");
+    throw new Error("We hit a snag. Give it one more try — these things happen.");
   }
 }
 
@@ -692,6 +701,7 @@ function Milestone({ text, checked, onToggle, onSchedule, scheduled }) {
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.3s ease",
           boxShadow: checked ? "0 2px 8px rgba(108,92,231,0.25)" : "none",
+          animation: checked ? "successPulse 0.6s ease" : "none",
         }}>
           {checked && Icon.check(10, "#fff")}
         </div>
@@ -936,7 +946,7 @@ function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone
       playBreakdownDone();
     } catch (e) {
       console.error("Breakdown error:", e);
-      setBreakdownError(e.message || "Failed to break down. Try again.");
+      setBreakdownError(e.message || "Something went wrong breaking this down. Give it another try.");
     }
     setBreakdownLoading(false);
   };
@@ -1571,6 +1581,8 @@ export default function PasoLive() {
   const [hasPurchased, setHasPurchased] = useState(false);
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [bgTheme, setBgTheme] = useState("lavender");
+  const [showThemePicker, setShowThemePicker] = useState(false);
   const [shareId, setShareId] = useState(null);
   const [shareStatus, setShareStatus] = useState(""); // "", "saved", "copied", "error"
   const [showSharePopup, setShowSharePopup] = useState(false);
@@ -1589,6 +1601,7 @@ export default function PasoLive() {
   const [pushStatus, setPushStatus] = useState("idle"); // idle, requesting, granted, denied, error
   const [userName, setUserName] = useState("");
   const [showWelcomeBack, setShowWelcomeBack] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
   // Accountability is inline now — no popup needed
   const [liveCount, setLiveCount] = useState(null);
   const phaseRefs = useRef([]);
@@ -1615,6 +1628,38 @@ export default function PasoLive() {
     const existingManifest = document.querySelector('link[rel="manifest"]');
     if (existingManifest) existingManifest.remove();
   }, [shareId]);
+
+  // Load saved background theme
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("paso-bg-theme");
+      if (saved && BG_THEMES.find(t => t.id === saved)) setBgTheme(saved);
+    } catch {}
+  }, []);
+
+  // Sync body background with theme
+  useEffect(() => {
+    const theme = BG_THEMES.find(t => t.id === bgTheme);
+    if (theme) document.body.style.background = theme.solid;
+  }, [bgTheme]);
+
+  const handleBgThemeChange = (id) => {
+    setBgTheme(id);
+    try { localStorage.setItem("paso-bg-theme", id); } catch {}
+    setShowThemePicker(false);
+  };
+
+  const isDarkTheme = BG_THEMES.find(t => t.id === bgTheme)?.dark || false;
+
+  // Offline detection
+  useEffect(() => {
+    const goOffline = () => setIsOffline(true);
+    const goOnline = () => setIsOffline(false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    if (!navigator.onLine) setIsOffline(true);
+    return () => { window.removeEventListener("offline", goOffline); window.removeEventListener("online", goOnline); };
+  }, []);
 
   // Fetch live roadmap count
   useEffect(() => { fetchRoadmapCount().then((n) => { if (n > 0) setLiveCount(n); }); }, []);
@@ -1694,7 +1739,7 @@ export default function PasoLive() {
         document.addEventListener("touchstart", startOnTap, { once: true });
         document.addEventListener("click", startOnTap, { once: true });
       }).catch(() => {
-        setError("This roadmap link is invalid or has expired.");
+        setError("We couldn't find that roadmap — the link may have expired. Try creating a new one.");
         setStep("landing");
         window.location.hash = "";
       });
@@ -1782,7 +1827,7 @@ export default function PasoLive() {
     try {
       const data = await generateQuestions(inputValue.trim());
       setQuestions(data.questions); setQuestionsIntro(data.intro); setStep("questions");
-    } catch (err) { setError(err.message); setStep("landing"); }
+    } catch (err) { setError(err.message || "Something went wrong. Let's try that again."); setStep("landing"); }
   };
 
   const handleAnswer = (id, answer, question) => {
@@ -2030,8 +2075,8 @@ export default function PasoLive() {
       }
     } catch (e) {
       console.error("Adjust error:", e);
-      setError("Couldn't adjust roadmap. Try again.");
-      setTimeout(() => setError(null), 3000);
+      setError("Something got in the way of adjusting your plan. Give it another try — we're here.");
+      setTimeout(() => setError(null), 4000);
     }
     setAdjusting(false);
   };
@@ -2229,8 +2274,9 @@ export default function PasoLive() {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, #e8dff5 0%, #f5e6d3 15%, #d4e4f7 35%, #f0d9e8 55%, #dbecd4 75%, #e8dff5 100%)",
-      backgroundAttachment: mob ? "scroll" : "fixed", color: INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
+      background: BG_THEMES.find(t => t.id === bgTheme)?.bg || BG_THEMES[0].bg,
+      backgroundAttachment: mob ? "scroll" : "fixed", color: isDarkTheme ? "rgba(255,255,255,0.9)" : INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
+      transition: "background 0.8s ease, color 0.5s ease",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
@@ -2255,6 +2301,9 @@ export default function PasoLive() {
         @keyframes tickerScroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
         @keyframes fadeOut{from{opacity:1}to{opacity:0}}
         @keyframes slideDown{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(24px)}}
+        button:active{transform:scale(0.97)!important;transition:transform 0.1s ease!important}
+        @keyframes successPulse{0%{box-shadow:0 0 0 0 rgba(108,92,231,0.4)}70%{box-shadow:0 0 0 12px rgba(108,92,231,0)}100%{box-shadow:0 0 0 0 rgba(108,92,231,0)}}
+        @keyframes skeletonShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
         @keyframes bubbleBurst{0%{transform:translate(0,0) scale(0);opacity:0}12%{transform:translate(calc(var(--midX) * 0.4),calc(var(--midY) * 0.4)) scale(1.1);opacity:1}50%{transform:translate(var(--midX),var(--midY)) scale(1);opacity:0.9}80%{opacity:0.4}100%{transform:translate(var(--endX),var(--endY)) scale(0.3);opacity:0}}
       `}</style>
 
@@ -2272,6 +2321,24 @@ export default function PasoLive() {
         </div>
       )}
 
+      {/* Offline banner */}
+      {isOffline && (
+        <div style={{
+          position: "fixed", top: step === "roadmap" ? 4 : 0, left: 0, right: 0, zIndex: 150,
+          display: "flex", justifyContent: "center", padding: "8px 16px",
+          animation: "slideUp 0.3s ease both",
+        }}>
+          <div style={{
+            ...B, fontSize: 12, color: INK45, padding: "8px 18px", borderRadius: 20,
+            background: "rgba(255,255,255,0.85)", backdropFilter: "blur(16px)",
+            border: "1px solid rgba(26,26,46,0.08)",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
+          }}>
+            You're offline — your roadmap is still here, but some features need a connection
+          </div>
+        </div>
+      )}
+
       {/* Side nav — desktop only */}
       {step === "roadmap" && roadmap && unlocked && !mob && (
         <nav style={{ position: "fixed", right: 28, top: "50%", transform: "translateY(-50%)", zIndex: 50, display: "flex", flexDirection: "column", gap: 12, animation: "fadeIn 1s ease 1s both" }}>
@@ -2286,8 +2353,8 @@ export default function PasoLive() {
         {/* Header */}
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px 0", animation: "fadeIn 0.8s ease both" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, cursor: "pointer" }} onClick={handleReset}>
-            <span style={{ fontFamily: H, fontSize: 21, fontWeight: 500, color: INK }}>Paso</span>
-            <span style={{ ...M, fontSize: 8, color: INK22, letterSpacing: "0.06em", fontStyle: "italic" }}>Spanish for step</span>
+            <span style={{ fontFamily: H, fontSize: 21, fontWeight: 500, color: isDarkTheme ? "rgba(255,255,255,0.9)" : INK, transition: "color 0.5s ease" }}>Paso</span>
+            <span style={{ ...M, fontSize: 8, color: isDarkTheme ? "rgba(255,255,255,0.3)" : INK22, letterSpacing: "0.06em", fontStyle: "italic", transition: "color 0.5s ease" }}>Spanish for step</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {/* Credits pill */}
@@ -2296,6 +2363,44 @@ export default function PasoLive() {
                 {Icon.check(10, ACCENT)}{credits} credits
               </span>
             )}
+            {/* Theme picker */}
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setShowThemePicker(v => !v)} style={{
+                width: 22, height: 22, borderRadius: "50%",
+                background: BG_THEMES.find(t => t.id === bgTheme)?.solid || "#e8dff5",
+                border: "2px solid rgba(255,255,255,0.6)",
+                cursor: "pointer",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                transition: "all 0.3s ease",
+                padding: 0, display: "block",
+              }} title="Change background" />
+              {showThemePicker && (
+                <div style={{
+                  position: "absolute", top: 32, right: 0,
+                  background: "rgba(255,255,255,0.92)", backdropFilter: "blur(20px)",
+                  borderRadius: 14, padding: "12px 14px",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+                  border: "1px solid rgba(255,255,255,0.6)",
+                  display: "flex", gap: 8, zIndex: 200,
+                  animation: "slideUp 0.3s cubic-bezier(0.16,1,0.3,1) both",
+                }}>
+                  {BG_THEMES.map(t => (
+                    <button key={t.id} onClick={() => handleBgThemeChange(t.id)}
+                      title={t.name}
+                      style={{
+                        width: 28, height: 28, borderRadius: "50%",
+                        background: t.solid, padding: 0,
+                        border: bgTheme === t.id ? `2px solid ${ACCENT}` : "2px solid rgba(0,0,0,0.08)",
+                        cursor: "pointer",
+                        transform: bgTheme === t.id ? "scale(1.15)" : "scale(1)",
+                        transition: "all 0.2s ease",
+                        boxShadow: bgTheme === t.id ? "0 0 0 2px rgba(108,92,231,0.3)" : "none",
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
             {/* Sound toggle */}
             <button onClick={toggleSound}
               style={{
@@ -2342,7 +2447,7 @@ export default function PasoLive() {
             {/* ── Hero ── */}
             <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 0.1s both" }}>
               <div style={{ ...M, fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: ACCENT, opacity: 0.55, marginBottom: 28 }}>
-                AI-powered roadmaps, one step at a time
+                Find your direction
               </div>
             </div>
             <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 0.25s both" }}>
@@ -2352,7 +2457,7 @@ export default function PasoLive() {
             </div>
             <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 0.4s both" }}>
               <p style={{ ...B, fontSize: 16, color: INK50, lineHeight: 1.8, maxWidth: 440, marginBottom: 52 }}>
-                Your goal. A few smart questions. A step-by-step roadmap you can actually follow.
+                Tell us what matters to you. We'll ask a few thoughtful questions, then build a roadmap that actually fits your life.
               </p>
             </div>
 
@@ -2461,13 +2566,13 @@ export default function PasoLive() {
           <div style={{ height: "80vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", animation: "fadeIn 0.5s ease both" }}>
             <PasoOrb progress={loadingProgress} interactive />
             <p style={{ fontFamily: H, fontSize: 24, fontStyle: "italic", color: INK30, marginTop: 36, marginBottom: 12, textAlign: "center" }}>
-              {step === "loadingQ" ? "Getting to know your goal..." : "Building your roadmap..."}
+              {step === "loadingQ" ? "Getting to know your goal..." : "Designing something personal..."}
             </p>
             <div key={loadingMsg} style={{ animation: "fadeIn 0.6s ease both" }}>
               <span style={{ ...B, fontSize: 13, color: INK40 }}>{loadingMsg}</span>
             </div>
-            <p style={{ ...M, fontSize: 9, color: INK22, letterSpacing: "0.04em" }}>
-              {step === "loadingQ" ? "This usually takes about 5 seconds" : "This usually takes about 20 seconds — worth the wait"}
+            <p style={{ ...M, fontSize: 9, color: INK22, letterSpacing: "0.04em", marginTop: 4 }}>
+              {step === "loadingQ" ? "Just a few seconds" : "Good things take a moment — about 20 seconds"}
             </p>
             <div style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ width: 120, height: 2, borderRadius: 1, background: "rgba(108,92,231,0.08)", overflow: "hidden" }}>
@@ -2475,7 +2580,18 @@ export default function PasoLive() {
               </div>
               <span style={{ ...M, fontSize: 9, color: INK25, minWidth: 30 }}>{Math.round(loadingProgress)}%</span>
             </div>
-            <Glass style={{ marginTop: 32, padding: "12px 20px", maxWidth: 340, textAlign: "center" }}>
+            {/* Skeleton preview of what's loading */}
+            {step === "loadingR" && (
+              <div style={{ marginTop: 32, width: "100%", maxWidth: 340, animation: "fadeIn 0.8s ease 2s both" }}>
+                {[1, 2, 3].map(i => (
+                  <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(255,255,255,0.3)", backdropFilter: "blur(12px)" }}>
+                    <div style={{ width: 28, height: 12, borderRadius: 4, background: "linear-gradient(90deg, rgba(108,92,231,0.06), rgba(108,92,231,0.12), rgba(108,92,231,0.06))", backgroundSize: "200% 100%", animation: "skeletonShimmer 1.5s ease infinite" }} />
+                    <div style={{ flex: 1, height: 10, borderRadius: 4, background: "linear-gradient(90deg, rgba(26,26,46,0.04), rgba(26,26,46,0.08), rgba(26,26,46,0.04))", backgroundSize: "200% 100%", animation: `skeletonShimmer 1.5s ease ${i * 0.2}s infinite` }} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <Glass style={{ marginTop: step === "loadingR" ? 16 : 32, padding: "12px 20px", maxWidth: 340, textAlign: "center" }}>
               <span style={{ ...B, fontSize: 13, color: INK50 }}>"{goal}"</span>
             </Glass>
           </div>
@@ -2491,7 +2607,7 @@ export default function PasoLive() {
               <h2 style={{ fontFamily: H, fontSize: "clamp(28px, 4vw, 40px)", fontWeight: 400, letterSpacing: "-0.025em", lineHeight: 1.15, marginBottom: 10, color: INK }}>{questionsIntro}</h2>
             </div>
             <div style={{ animation: "slideUp 0.8s cubic-bezier(0.16,1,0.3,1) 0.25s both" }}>
-              <p style={{ ...B, fontSize: 14, color: INK45, marginBottom: 44 }}>A few quick questions so your roadmap fits your reality.</p>
+              <p style={{ ...B, fontSize: 14, color: INK45, lineHeight: 1.7, marginBottom: 44 }}>The better we understand where you're starting from, the more useful your roadmap will be. No wrong answers.</p>
             </div>
             <Glass style={{ marginBottom: 32 }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
@@ -2559,10 +2675,10 @@ export default function PasoLive() {
               <Glass style={{ maxWidth: 480, padding: mob ? "28px 24px" : "32px 36px", marginBottom: 24 }}>
                 <p style={{ fontFamily: H, fontSize: mob ? 20 : 24, fontWeight: 400, color: INK, lineHeight: 1.5, marginBottom: 16 }}>You just took your first step.</p>
                 <p style={{ ...B, fontSize: 14, color: INK50, lineHeight: 1.7, marginBottom: 12 }}>
-                  But a single action is not a plan. 92% of goals fail without a system. Life coaches cost over 200 an hour. Habit apps charge 5/month and still leave the planning to you.
+                  One action is a start, but it's not a system. 92% of goals fail without one. Life coaches charge over 200 an hour. Habit apps cost 5/month and still leave the hard part to you.
                 </p>
                 <p style={{ ...B, fontSize: 14, color: INK60, lineHeight: 1.7, marginBottom: 20 }}>
-                  Paso gives you a full AI roadmap with checkable milestones, weekly accountability nudges, calendar scheduling, and scientific references. All for the price of a coffee.
+                  Paso builds you a real plan — checkable milestones, weekly nudges that actually help, calendar scheduling, and research behind every phase. All for the cost of a coffee.
                 </p>
                 <p style={{ ...M, fontSize: 11, color: INK30, marginBottom: 20 }}>Most people use 8-12 credits to go from idea to done.</p>
                 {!hasPurchased ? (<>
@@ -2633,7 +2749,7 @@ export default function PasoLive() {
               <div style={{ maxWidth: 480, textAlign: "center", padding: "24px 0 48px" }}>
                 <p style={{ fontFamily: H, fontSize: 14, fontStyle: "italic", color: INK22, marginBottom: 10 }}>"But can't I just use ChatGPT?"</p>
                 <p style={{ ...B, fontSize: 12, color: INK25, lineHeight: 1.65, maxWidth: 380, margin: "0 auto" }}>
-                  ChatGPT gives you a wall of text that disappears when you close the tab. Paso gives you a system that lives on your homescreen and keeps showing up until you finish.
+                  ChatGPT gives you a wall of text that vanishes when you close the tab. Paso gives you a living system that stays on your homescreen and keeps showing up — until you've actually done it.
                 </p>
               </div>
             </Reveal>
@@ -2691,7 +2807,7 @@ export default function PasoLive() {
             {isSharedView && (
               <div style={{ animation: "fadeIn 0.5s ease both", marginTop: 12, marginBottom: -20 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderRadius: 12, background: "rgba(108,92,231,0.04)", border: "1px solid rgba(108,92,231,0.1)", flexWrap: "wrap", gap: 8 }}>
-                  <span style={{ ...B, fontSize: 12, color: INK30 }}>You're viewing a shared roadmap · progress saves automatically</span>
+                  <span style={{ ...B, fontSize: 12, color: INK30 }}>This is your roadmap — any progress you make saves automatically</span>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => setShowInstallTip(true)}
                       style={{ ...M, fontSize: 10, letterSpacing: "0.04em", padding: "6px 14px", borderRadius: 8, border: "1px solid rgba(108,92,231,0.15)", background: "rgba(255,255,255,0.5)", color: ACCENT, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
@@ -2887,8 +3003,8 @@ export default function PasoLive() {
                 <Reveal delay={0.24}>
                   <p style={{ fontFamily: H, fontSize: 16, fontStyle: "italic", color: "rgba(26,26,46,0.2)", marginBottom: 36, maxWidth: 380, lineHeight: 1.6 }}>
                     {allComplete
-                      ? "Every milestone, every phase. This roadmap is complete. But the journey doesn't stop here."
-                      : "Download your roadmap and check off milestones as you go. Every phase you complete gets you closer."}
+                      ? "You did the thing. Every phase, every milestone. Whatever comes next, you've proven you can build toward it."
+                      : "Your roadmap lives here. Check off milestones as you go — each one is a step closer to the person you're becoming."}
                   </p>
                 </Reveal>
 
@@ -2973,10 +3089,10 @@ export default function PasoLive() {
 
                   <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 0.8s both" }}>
                     <p style={{ fontFamily: H, fontSize: 18, fontStyle: "italic", color: INK30, lineHeight: 1.7, marginBottom: 8 }}>
-                      {totalMilestones} milestones. {roadmap.phases.length} phases. All done.
+                      {totalMilestones} milestones. {roadmap.phases.length} phases. All yours.
                     </p>
                     <p style={{ ...B, fontSize: 14, color: INK25, lineHeight: 1.7, marginBottom: 36 }}>
-                      Every step taken. Now set a bigger goal.
+                      You showed up, step after step. That's not luck — that's who you are. Ready for something bigger?
                     </p>
                   </div>
 
@@ -3350,7 +3466,7 @@ export default function PasoLive() {
 
             <h3 style={{ fontFamily: H, fontSize: 22, fontWeight: 400, color: INK, marginBottom: 8 }}>Things changed?</h3>
             <p style={{ ...B, fontSize: 13, color: INK30, lineHeight: 1.6, marginBottom: 16 }}>
-              Tell Paso what's different. Your plan will adapt while keeping the progress you've already made.
+              Life happens. Tell us what shifted and your roadmap will adapt — everything you've already accomplished stays.
             </p>
 
             {error && (

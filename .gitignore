@@ -35,23 +35,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-
-# .env.local — NEVER commit this file to Git
-# These values only exist on the server. The frontend cannot see them.
-
-# Supabase — get these from Supabase Dashboard > Settings > API
-SUPABASE_URL=https://qfpjdhjduailcgxkoabe.supabase.co
-SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmcGpkaGpkdWFpbGNneGtvYWJlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MjQ0MzQ1OCwiZXhwIjoyMDg4MDE5NDU4fQ.JoCOXwHrFVsBLs64mlppJIKrs_2NpkZXGFh3HisUE0Y
-# IMPORTANT: Use the "service_role" key (NOT the "anon" key).
-# The service_role key bypasses RLS — needed for server-side writes.
-# The anon key is for browser-side use only and should NOT be here.
-
-# Anthropic — the SDK reads this automatically
-# VAPID keys for push notifications (generate with: npx web-push generate-vapid-keys)
-NEXT_PUBLIC_VAPID_PUBLIC_KEY=BJLVJnpbkcplUlogGtumXO8I2cnXR-AAF0QA1pu37ExIaVSnQ3KpMmepXdHmGuJeN_HeYvO54QuQ4s2c5GDO0xI
-VAPID_PRIVATE_KEY=meidWgjMSFAg8f-HdspMZ7jmgpPqRq7KxxSOwH6vmfk
-VAPID_EMAIL=mailto:hello@numinlabs.com
-
-# Cron secret — set to any random string. Vercel sends this as Bearer token.
-# Without this, anyone can trigger /api/cron/nudge manually.
-CRON_SECRET=Sheuq^2283";SQ]\'SWQKODWOAZKOQi2ha288392jsxswougbjxew732oasshswq2pp2psuosmsjnklxcocw=0cwhuoogoorhklhucjauihoeqhfhuhouidiquiYDGWUGU838-r2&(4
+.env
+.env.local
+.env*.local
