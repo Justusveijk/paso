@@ -2,9 +2,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as Tone from "tone";
 
-/* ─── SUPABASE ─── */
-const SUPABASE_URL = "https://qfpjdhjduailcgxkoabe.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmcGpkaGpkdWFpbGNneGtvYWJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0NDM0NTgsImV4cCI6MjA4ODAxOTQ1OH0.bkYmtqywP4kdr248177N-Y5P6NzYzWxQEZ6zpi26sXg";
+/* ─── API CLIENT (all secrets are server-side in /api routes) ─── */
+
+// Security: every API call includes this header.
+// The server rejects requests without it — blocks curl/terminal abuse.
+const API_HEADERS = {
+  "Content-Type": "application/json",
+  "X-Paso-Client": "paso-web-2026",
+};
 
 function generateId() {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -13,38 +18,27 @@ function generateId() {
   return id;
 }
 
-/* ─── INPUT SANITIZATION ─── */
 function sanitize(str, maxLen = 2000) {
   if (typeof str !== "string") return "";
   return str
-    .replace(/<[^>]*>/g, "")      // strip HTML tags
-    .replace(/[^\x20-\x7E\u00C0-\u024F\u0370-\u03FF\u2000-\u206F\u2190-\u21FF\n\r\t ]/g, "") // allow basic chars + accents + common unicode
+    .replace(/<[^>]*>/g, "")
+    .replace(/[^\x20-\x7E\u00C0-\u024F\u0370-\u03FF\u2000-\u206F\u2190-\u21FF\n\r\t ]/g, "")
     .trim()
     .slice(0, maxLen);
-}
-
-function sanitizePhone(str) {
-  if (typeof str !== "string") return "";
-  return str.replace(/[^0-9+\-() ]/g, "").trim().slice(0, 20);
 }
 
 async function saveRoadmap(roadmapData, answersData, goalText, retries = 2) {
   const id = generateId();
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/roadmaps`, {
+      const res = await fetch("/api/roadmaps", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          Prefer: "return=representation",
-        },
+        headers: API_HEADERS,
         body: JSON.stringify({ id, goal: sanitize(goalText, 500), roadmap: roadmapData, answers: answersData, progress: {} }),
       });
       if (!res.ok) {
-        const err = await res.text().catch(() => "");
-        throw new Error(`Save failed (${res.status}): ${err}`);
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Save failed (${res.status})`);
       }
       return id;
     } catch (e) {
@@ -55,302 +49,359 @@ async function saveRoadmap(roadmapData, answersData, goalText, retries = 2) {
 }
 
 async function loadRoadmap(id) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${id}&select=*`, {
-    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-  });
-  if (!res.ok) throw new Error("Failed to load");
-  const data = await res.json();
-  if (!data.length) throw new Error("Roadmap not found");
-  return data[0];
+  const res = await fetch(`/api/roadmaps?id=${id}`, { headers: API_HEADERS });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to load");
+  }
+  return res.json();
 }
 
 async function updateProgress(id, progress) {
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${id}`, {
+    await fetch("/api/roadmaps", {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_KEY,
-        Authorization: `Bearer ${SUPABASE_KEY}`,
-      },
-      body: JSON.stringify({ progress }),
+      headers: API_HEADERS,
+      body: JSON.stringify({ id, progress }),
     });
   } catch (e) { /* silent fail for progress saves */ }
 }
 
+async function patchRoadmap(id, updates) {
+  const res = await fetch("/api/roadmaps", {
+    method: "PATCH",
+    headers: API_HEADERS,
+    body: JSON.stringify({ id, ...updates }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Update failed");
+  }
+}
+
 async function fetchRoadmapCount() {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?select=id`, {
-      method: "HEAD",
-      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, Prefer: "count=exact" },
-    });
-    const range = res.headers.get("content-range");
-    if (range) { const total = range.split("/")[1]; return parseInt(total, 10) || 0; }
-    return 0;
+    const res = await fetch("/api/roadmaps/count", { headers: API_HEADERS });
+    const data = await res.json();
+    return data.count || 0;
   } catch { return 0; }
+}
+
+/* ─── CALENDAR (.ics) GENERATION ─── */
+function formatICSDate(date) {
+  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+}
+function generateICS(title, description, startDate, durationMinutes = 60) {
+  const start = new Date(startDate);
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  const alarm = durationMinutes >= 60 ? 15 : 5; // reminder before event
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Paso//Roadmap//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `DTSTART:${formatICSDate(start)}`,
+    `DTEND:${formatICSDate(end)}`,
+    `SUMMARY:${title.replace(/[,;\\]/g, " ")}`,
+    `DESCRIPTION:${(description || "").replace(/[,;\\]/g, " ").replace(/\n/g, "\\n")}`,
+    "STATUS:CONFIRMED",
+    `UID:paso-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@paso.app`,
+    "BEGIN:VALARM",
+    "TRIGGER:-PT" + alarm + "M",
+    "ACTION:DISPLAY",
+    `DESCRIPTION:${title.replace(/[,;\\]/g, " ")}`,
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+function generateBulkICS(events) {
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Paso//Roadmap//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+  ];
+  events.forEach((ev) => {
+    const start = new Date(ev.start);
+    const end = new Date(start.getTime() + (ev.duration || 60) * 60000);
+    lines.push(
+      "BEGIN:VEVENT",
+      `DTSTART:${formatICSDate(start)}`,
+      `DTEND:${formatICSDate(end)}`,
+      `SUMMARY:${ev.title.replace(/[,;\\]/g, " ")}`,
+      `DESCRIPTION:${(ev.description || "").replace(/[,;\\]/g, " ").replace(/\n/g, "\\n")}`,
+      "STATUS:CONFIRMED",
+      `UID:paso-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@paso.app`,
+      "BEGIN:VALARM",
+      "TRIGGER:-PT15M",
+      "ACTION:DISPLAY",
+      `DESCRIPTION:${ev.title.replace(/[,;\\]/g, " ")}`,
+      "END:VALARM",
+      "END:VEVENT"
+    );
+  });
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+function downloadICS(icsContent, filename = "paso-milestone.ics") {
+  const blob = new Blob([icsContent], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+function parseTimelineWeeks(timeline) {
+  if (!timeline) return 12;
+  const m = timeline.match(/(\d+)\s*week/i);
+  if (m) return parseInt(m[1]);
+  const mo = timeline.match(/(\d+)\s*month/i);
+  if (mo) return parseInt(mo[1]) * 4;
+  return 12;
 }
 
 /* ─── SOUND SYSTEM — Minecraft-style ambient ─── */
 let audioReady = false;
-let synths = {};
-let ambientTimeout = null;
+const synths = {};
+let ambientInterval = null;
 let ambientRunning = false;
+let ambientTick = 0;
+let ambientPhase = 0; // 0=awakening, 1=growing, 2=flowing
+let ambientElapsed = 0;
+let ambientPhaseTimer = null;
 
 async function initAudio() {
-  if (audioReady) return;
+  if (audioReady && Tone.context.state === "running") return;
+  audioReady = false; // Reset — iOS may have blocked previous attempt
   try {
     await Tone.start();
+    if (Tone.context.state !== "running") await Tone.context.resume();
+    // Verify it actually started — iOS may silently fail
+    if (Tone.context.state !== "running") {
+      console.warn("Audio: context still not running after resume, state:", Tone.context.state);
+      return;
+    }
     audioReady = true;
 
-    // Warm reverb — immersive but not cathedral-like
-    const bigVerb = new Tone.Reverb({ decay: 7, wet: 0.55 }).toDestination();
-    const warmDelay = new Tone.FeedbackDelay("4n", 0.1).connect(bigVerb);
-    warmDelay.wet.value = 0.15;
-
-    // Felt piano — warm dampened keys
-    const feltFilter = new Tone.Filter(1800, "lowpass").connect(warmDelay);
+    // ─── INSTRUMENTS ───
+    // Piano (all phases)
+    const pianoRev = new Tone.Reverb({ decay: 7, wet: 0.55 }).toDestination();
+    const pianoGain = new Tone.Gain(0.08).connect(pianoRev);
     synths.piano = new Tone.Synth({
       oscillator: { type: "triangle" },
-      envelope: { attack: 0.35, decay: 2.5, sustain: 0.04, release: 5 },
-      volume: -20,
-    }).connect(feltFilter);
+      envelope: { attack: 0.04, decay: 3.5, sustain: 0.02, release: 4.5 },
+    }).connect(pianoGain);
+    synths.pianoGain = pianoGain;
 
-    // High piano — octave up for sparkle
-    synths.pianoHigh = new Tone.Synth({
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.4, decay: 2, sustain: 0.03, release: 4 },
-      volume: -25,
-    }).connect(feltFilter);
-
-    // Kalimba — plucked metallic warmth (the unique instrument)
-    const kalimbaVerb = new Tone.Reverb({ decay: 4, wet: 0.5 }).toDestination();
+    // Kalimba (phase 2+)
+    const kalRev = new Tone.Reverb({ decay: 5, wet: 0.5 }).toDestination();
+    const kalGain = new Tone.Gain(0).connect(kalRev);
     synths.kalimba = new Tone.Synth({
       oscillator: { type: "sine" },
-      envelope: { attack: 0.005, decay: 1.8, sustain: 0, release: 2.5 },
-      volume: -22,
-    }).connect(kalimbaVerb);
+      envelope: { attack: 0.002, decay: 2, sustain: 0, release: 3 },
+    }).connect(kalGain);
+    synths.kalimbaGain = kalGain;
 
-    // Water texture — pink noise through bandpass sounds like running water
-    const waterBP = new Tone.Filter({ frequency: 1200, type: "bandpass", Q: 0.8 }).connect(bigVerb);
-    const waterLP = new Tone.Filter(2000, "lowpass").connect(waterBP);
-    const noiseGain = new Tone.Gain(0).connect(waterLP);
-    synths.nature = new Tone.Noise("pink").connect(noiseGain);
-    synths.nature.volume.value = -22;
-    synths.natureGain = noiseGain;
-
-    // Bird chirps — louder, more present
-    const birdVerb = new Tone.Reverb({ decay: 2, wet: 0.4 }).toDestination();
-    synths.bird = new Tone.Synth({
+    // Glass bell (phase 3)
+    const bellRev = new Tone.Reverb({ decay: 6, wet: 0.55 }).toDestination();
+    const bellGain = new Tone.Gain(0).connect(bellRev);
+    synths.bell = new Tone.Synth({
       oscillator: { type: "sine" },
-      envelope: { attack: 0.003, decay: 0.1, sustain: 0, release: 0.2 },
-      volume: -20,
-    }).connect(birdVerb);
+      envelope: { attack: 0.002, decay: 2.8, sustain: 0, release: 3.5 },
+    }).connect(bellGain);
+    synths.bellGain = bellGain;
+
+    // Pad chord (phase 2+)
+    const padRev = new Tone.Reverb({ decay: 9, wet: 0.5 }).toDestination();
+    const padGain = new Tone.Gain(0).connect(padRev);
+    synths.pad = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: "sine" },
+      envelope: { attack: 5, decay: 4, sustain: 0.25, release: 6 },
+    }).connect(padGain);
+    synths.padGain = padGain;
+
+    // Interaction reverb (shared)
+    synths.fxRev = new Tone.Reverb({ decay: 6, wet: 0.5 }).toDestination();
 
     // Hover whisper
-    const hoverVerb = new Tone.Reverb({ decay: 3, wet: 0.6 }).toDestination();
+    const hoverRev = new Tone.Reverb({ decay: 3, wet: 0.6 }).toDestination();
     synths.hover = new Tone.Synth({
       oscillator: { type: "sine" },
       envelope: { attack: 0.15, decay: 0.6, sustain: 0, release: 1.5 },
       volume: -32,
-    }).connect(hoverVerb);
-
-    // Chime — reveal sound
-    const chimeVerb = new Tone.Reverb({ decay: 2.5, wet: 0.5 }).toDestination();
-    synths.chime = new Tone.Synth({
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.01, decay: 0.35, sustain: 0, release: 1.5 },
-      volume: -20,
-    }).connect(chimeVerb);
-
-    // Muted bell tick — round milestone check
-    const bellTickVerb = new Tone.Reverb({ decay: 2, wet: 0.45 }).toDestination();
-    synths.tick = new Tone.Synth({
-      oscillator: { type: "sine" },
-      envelope: { attack: 0.008, decay: 0.4, sustain: 0, release: 1.2 },
-      volume: -18,
-    }).connect(bellTickVerb);
-
-    // Bell — gentle high tones for late ambient
-    const bellDelay = new Tone.FeedbackDelay("8n", 0.1).connect(bigVerb);
-    bellDelay.wet.value = 0.2;
-    synths.bell = new Tone.Synth({
-      oscillator: { type: "sine" },
-      envelope: { attack: 0.01, decay: 1.2, sustain: 0, release: 2.5 },
-      volume: -26,
-    }).connect(bellDelay);
+    }).connect(hoverRev);
 
   } catch (e) { console.warn("Audio init failed:", e); }
 }
 
-// Notes progress from neutral → hopeful (minor pentatonic → major pentatonic)
-const NOTES_EARLY = ["C3", "E3", "G3", "A3", "C4", "E4", "G4"]; // C major — open, neutral
-const NOTES_MID = ["C4", "E4", "G4", "A4", "C5", "D5", "E5"]; // higher, brighter
-const NOTES_LATE = ["D4", "E4", "G4", "A4", "B4", "D5", "E5", "G5"]; // G major — uplifting, resolved
-const NOTES_HIGH = ["E5", "G5", "A5", "B5", "D6"]; // sparkle layer
-let ambientAge = 0;
+// ─── PROGRESSIVE AMBIENT PHRASES ───
+// Phase 1: very sparse piano
+const PH1_PIANO = ["C4",null,null,null,"E4",null,null,null,null,null,"G4",null,null,null,null,null,null,null,
+                   "A4",null,null,null,null,"G4",null,null,null,null,null,"E4",null,null,null,null,null,null];
+// Phase 2: piano + kalimba
+const PH2_PIANO =   ["C4",null,null,null,"E4",null,null,null,"G4",null,null,null,null,null,
+                     "A4",null,null,null,"G4",null,null,"E4",null,null,null,null,null,null];
+const PH2_KALIMBA = [null,null,"C5","E5","G5",null,null,null,null,null,null,null,null,null,
+                     null,null,null,null,null,"A4","C5","E5","C5",null,null,null,null,null];
+// Phase 3: all three
+const PH3_PIANO =   ["C4",null,null,"E4",null,null,"G4",null,null,null,null,null,
+                     "A4",null,null,"G4",null,"E4",null,null,null,null,null,null];
+const PH3_KALIMBA = [null,"C5","E5",null,"G5","E5",null,null,null,null,null,null,
+                     null,"A4","C5",null,"E5","G5","E5",null,null,null,null,null];
+const PH3_BELL =    [null,null,null,null,null,null,"E6",null,null,null,null,null,
+                     null,null,null,null,null,null,null,"G5",null,null,null,null];
+const PAD_CHORDS = [["C3","G3","E4"], ["A2","E3","C4"], ["F3","A3","C4","E4"], ["G3","B3","D4","F4"]];
 
-function playAmbientNote() {
+function fadeGain(g, target, sec) {
+  const steps = 40, curr = g.gain.value, diff = target - curr;
+  let s = 0;
+  const iv = setInterval(() => { s++; g.gain.value = curr + diff * (s / steps); if (s >= steps) clearInterval(iv); }, (sec * 1000) / steps);
+}
+
+function playAmbientTick() {
   if (!audioReady || !ambientRunning) return;
-  ambientAge++;
-
-  // Pick notes based on progression — gets brighter over time
-  const phase = ambientAge > 16 ? "late" : ambientAge > 8 ? "mid" : "early";
-  const notes = phase === "late" ? NOTES_LATE : phase === "mid" ? NOTES_MID : NOTES_EARLY;
-  const useHigh = phase === "late" ? Math.random() < 0.35 : Math.random() < 0.15;
-  const playNotes = useHigh ? NOTES_HIGH : notes;
-  const note = playNotes[Math.floor(Math.random() * playNotes.length)];
-  const synth = useHigh ? synths.pianoHigh : synths.piano;
-  synth?.triggerAttackRelease(note, "1n");
-
-  // Double notes — more frequent as it progresses (feels fuller, more hopeful)
-  const doubleChance = phase === "late" ? 0.45 : phase === "mid" ? 0.35 : 0.25;
-  if (Math.random() < doubleChance) {
-    const delay = 500 + Math.random() * 1000;
-    setTimeout(() => {
-      if (!ambientRunning) return;
-      const n2 = playNotes[Math.floor(Math.random() * playNotes.length)];
-      synth?.triggerAttackRelease(n2, "1n");
-    }, delay);
+  if (ambientPhase === 0) {
+    const n = PH1_PIANO[ambientTick % PH1_PIANO.length];
+    if (n) synths.piano?.triggerAttackRelease(n, "2n");
+  } else if (ambientPhase === 1) {
+    const pn = PH2_PIANO[ambientTick % PH2_PIANO.length];
+    const kn = PH2_KALIMBA[ambientTick % PH2_KALIMBA.length];
+    if (pn) synths.piano?.triggerAttackRelease(pn, "2n");
+    if (kn) synths.kalimba?.triggerAttackRelease(kn, "8n");
+  } else {
+    const pn = PH3_PIANO[ambientTick % PH3_PIANO.length];
+    const kn = PH3_KALIMBA[ambientTick % PH3_KALIMBA.length];
+    const bn = PH3_BELL[ambientTick % PH3_BELL.length];
+    if (pn) synths.piano?.triggerAttackRelease(pn, "2n");
+    if (kn) synths.kalimba?.triggerAttackRelease(kn, "8n");
+    if (bn) synths.bell?.triggerAttackRelease(bn, "8n");
   }
-
-  // Water texture — gets slightly louder over time
-  if (synths.natureGain) {
-    const targetVol = phase === "late" ? 0.22 : phase === "mid" ? 0.18 : 0.14;
-    synths.natureGain.gain.rampTo(targetVol, 4);
-  }
-
-  // Kalimba — warm plucked notes, more frequent as mood lifts
-  if (ambientAge > 4 && synths.kalimba && Math.random() < (phase === "late" ? 0.45 : 0.25)) {
-    const kalimbaNotes = phase === "late" ? ["G5", "A5", "B5", "D6", "E6"] : ["C5", "E5", "G5", "A5"];
-    const kDelay = 300 + Math.random() * 800;
-    setTimeout(() => {
-      if (!ambientRunning) return;
-      synths.kalimba.triggerAttackRelease(kalimbaNotes[Math.floor(Math.random() * kalimbaNotes.length)], "8n");
-    }, kDelay);
-  }
-
-  // Bird chirps — arrive early, get more frequent
-  if (ambientAge > 3 && synths.bird && Math.random() < (phase === "late" ? 0.45 : phase === "mid" ? 0.3 : 0.18)) {
-    const birdDelay = 600 + Math.random() * 1500;
-    setTimeout(() => {
-      if (!ambientRunning) return;
-      const birdBase = 2200 + Math.random() * 1400;
-      const now = Tone.now();
-      synths.bird.frequency.setValueAtTime(birdBase, now);
-      synths.bird.triggerAttackRelease("16n", now);
-      if (Math.random() < 0.65) {
-        synths.bird.frequency.setValueAtTime(birdBase * (1.05 + Math.random() * 0.15), now + 0.1);
-        synths.bird.triggerAttackRelease("16n", now + 0.1);
-      }
-      if (Math.random() < 0.35) {
-        synths.bird.frequency.setValueAtTime(birdBase * (0.95 + Math.random() * 0.12), now + 0.2);
-        synths.bird.triggerAttackRelease("16n", now + 0.2);
-      }
-    }, birdDelay);
-  }
-
-  // Gentle bells — celebratory in late phase
-  if (ambientAge > 6 && synths.bell && Math.random() < (phase === "late" ? 0.35 : 0.18)) {
-    const bellNotes = phase === "late" ? ["B5", "D6", "E6", "G6"] : ["G5", "A5", "C6", "D6"];
-    synths.bell.triggerAttackRelease(bellNotes[Math.floor(Math.random() * bellNotes.length)], "8n");
-  }
-
-  // Schedule next — gets denser (more alive) as it progresses
-  const baseDelay = phase === "late" ? 1800 : phase === "mid" ? 2200 : 2800;
-  const nextDelay = baseDelay + Math.random() * 3000;
-  ambientTimeout = setTimeout(playAmbientNote, nextDelay);
+  ambientTick++;
 }
 
 function startAmbient() {
   if (!audioReady || ambientRunning) return;
   ambientRunning = true;
-  ambientTimeout = setTimeout(playAmbientNote, 1000);
-  // Start nature texture — gentle wind fading in
-  try {
-    if (synths.nature && synths.natureGain) {
-      synths.nature.start();
-      synths.natureGain.gain.rampTo(0.12, 8); // slow fade in over 8 seconds
+  ambientTick = 0;
+  ambientElapsed = 0;
+  ambientPhase = 0;
+  ambientInterval = setInterval(playAmbientTick, 600);
+  // Phase progression
+  ambientPhaseTimer = setInterval(() => {
+    ambientElapsed++;
+    if (ambientElapsed === 40 && ambientPhase === 0) {
+      ambientPhase = 1;
+      fadeGain(synths.kalimbaGain, 0.09, 5);
+      fadeGain(synths.padGain, 0.016, 6);
+      synths.pad?.triggerAttackRelease(PAD_CHORDS[0], 18);
     }
-  } catch (e) { /* noise may already be running */ }
+    if (ambientElapsed === 80 && ambientPhase === 1) {
+      ambientPhase = 2;
+      fadeGain(synths.bellGain, 0.055, 5);
+      fadeGain(synths.kalimbaGain, 0.11, 4);
+      fadeGain(synths.padGain, 0.022, 5);
+    }
+    if (ambientElapsed % 20 === 0 && ambientPhase >= 1) {
+      synths.pad?.triggerAttackRelease(PAD_CHORDS[Math.floor(ambientElapsed / 20) % PAD_CHORDS.length], 18);
+    }
+    if (ambientElapsed >= 120) ambientElapsed = 40;
+  }, 1000);
 }
 
 function stopAmbient() {
   ambientRunning = false;
-  ambientAge = 0;
-  if (ambientTimeout) { clearTimeout(ambientTimeout); ambientTimeout = null; }
-  // Fade out nature texture
+  ambientTick = 0;
+  ambientElapsed = 0;
+  ambientPhase = 0;
+  if (ambientInterval) { clearInterval(ambientInterval); ambientInterval = null; }
+  if (ambientPhaseTimer) { clearInterval(ambientPhaseTimer); ambientPhaseTimer = null; }
   try {
-    if (synths.natureGain) {
-      synths.natureGain.gain.rampTo(0, 2);
-      setTimeout(() => { try { synths.nature?.stop(); } catch(e) {} }, 2200);
-    }
+    if (synths.kalimbaGain) synths.kalimbaGain.gain.value = 0;
+    if (synths.bellGain) synths.bellGain.gain.value = 0;
+    if (synths.padGain) synths.padGain.gain.value = 0;
   } catch (e) {}
 }
 
-// Hover whisper — random high pentatonic note, very quiet
+// ─── INTERACTION SOUNDS (warm layered piano + kalimba) ───
 function playHoverWhisper() {
   if (!audioReady) return;
   const notes = ["G5", "A5", "C6", "D6", "E6"];
   synths.hover?.triggerAttackRelease(notes[Math.floor(Math.random() * notes.length)], "16n");
 }
 
-// Reveal chime — 2 quick notes
 function playRevealChime() {
   if (!audioReady) return;
-  const now = Tone.now();
-  synths.chime?.triggerAttackRelease("E5", "16n", now);
-  synths.chime?.triggerAttackRelease("G5", "8n", now + 0.12);
+  const pSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.015, decay: 1.5, sustain: 0.02, release: 2.5 } }).connect(new Tone.Gain(0.1).connect(synths.fxRev));
+  const kSyn = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.003, decay: 1.2, sustain: 0, release: 2 } }).connect(new Tone.Gain(0.06).connect(synths.fxRev));
+  pSyn.triggerAttackRelease("E5", "8n");
+  setTimeout(() => { pSyn.triggerAttackRelease("G5", "8n"); kSyn.triggerAttackRelease("E5", "16n"); }, 100);
 }
 
-// Unlock — ascending pentatonic run
 function playUnlockSound() {
   if (!audioReady) return;
-  const now = Tone.now();
-  ["C5", "E5", "G5", "C6"].forEach((n, i) => {
-    synths.chime?.triggerAttackRelease(n, "16n", now + i * 0.1);
+  const pSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.015, decay: 2.5, sustain: 0.02, release: 3.5 } }).connect(new Tone.Gain(0.1).connect(synths.fxRev));
+  const kSyn = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.003, decay: 2, sustain: 0, release: 2.5 } }).connect(new Tone.Gain(0.06).connect(synths.fxRev));
+  const mel = ["C4", "E4", "G4", "C5", "E5", "G5", "C6"];
+  mel.forEach((n, i) => {
+    setTimeout(() => pSyn.triggerAttackRelease(n, "4n"), i * 130);
+    if (i > 0) setTimeout(() => kSyn.triggerAttackRelease(n, "8n"), i * 130 + 50);
   });
 }
 
-// Milestone tick — ascending pitch, gets more positive each check
 let milestoneTickCount = 0;
-const TICK_SCALE = ["C5", "D5", "E5", "F5", "G5", "A5", "B5", "C6", "D6", "E6", "F6", "G6", "A6", "B6", "C7"];
+const TICK_SCALE = ["C5", "D5", "E5", "F5", "G5", "A5", "B5", "C6", "D6", "E6", "F6", "G6"];
 function playMilestoneTick() {
   if (!audioReady) return;
   const note = TICK_SCALE[milestoneTickCount % TICK_SCALE.length];
-  synths.tick?.triggerAttackRelease(note, "16n");
+  const pSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.012, decay: 1.2, sustain: 0.01, release: 2 } }).connect(new Tone.Gain(0.1).connect(synths.fxRev));
+  const kSyn = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.003, decay: 1, sustain: 0, release: 1.5 } }).connect(new Tone.Gain(0.06).connect(synths.fxRev));
+  pSyn.triggerAttackRelease(note, "8n");
+  setTimeout(() => kSyn.triggerAttackRelease(note, "16n"), 30);
   milestoneTickCount++;
 }
 
-// Breakdown done
 function playBreakdownDone() {
   if (!audioReady) return;
-  const now = Tone.now();
-  synths.chime?.triggerAttackRelease("D5", "16n", now);
-  synths.chime?.triggerAttackRelease("G5", "16n", now + 0.1);
+  const pSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.015, decay: 1.5, sustain: 0.02, release: 2 } }).connect(new Tone.Gain(0.1).connect(synths.fxRev));
+  pSyn.triggerAttackRelease("D5", "8n");
+  setTimeout(() => pSyn.triggerAttackRelease("G5", "8n"), 100);
 }
 
-// Phase complete celebration — euphoric ascending arpeggio with shimmer
+// Phase complete — bright, bouncy, happy ascending run
 function playCelebration() {
   if (!audioReady) return;
-  const now = Tone.now();
-  // Main rising arpeggio — warm and triumphant
-  const main = ["C4", "E4", "G4", "C5", "E5", "G5", "C6"];
-  main.forEach((n, i) => {
-    synths.piano?.triggerAttackRelease(n, "4n", now + i * 0.08);
+  const pSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 1.5, sustain: 0.02, release: 2.5 } }).connect(new Tone.Gain(0.11).connect(synths.fxRev));
+  const kSyn = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.003, decay: 1.2, sustain: 0, release: 2 } }).connect(new Tone.Gain(0.08).connect(synths.fxRev));
+  // Happy bouncy run — quick ascending, kalimba sparkles between
+  const run = ["C5", "E5", "G5", "A5", "C6", "E6", "G6"];
+  run.forEach((n, i) => {
+    setTimeout(() => pSyn.triggerAttackRelease(n, "8n"), i * 80);
+    if (i % 2 === 0) setTimeout(() => kSyn.triggerAttackRelease(n, "16n"), i * 80 + 40);
   });
-  // Sparkle layer — high bell tones scattered on top
-  const sparkle = ["E6", "G6", "A6", "C7"];
-  sparkle.forEach((n, i) => {
-    setTimeout(() => {
-      if (synths.bell) synths.bell.triggerAttackRelease(n, "16n");
-    }, 300 + i * 120 + Math.random() * 80);
-  });
-  // Kalimba cascade underneath
-  setTimeout(() => {
-    const notes = ["C5", "E5", "G5", "C6"];
-    notes.forEach((n, i) => setTimeout(() => synths.kalimba?.triggerAttackRelease(n, "8n"), i * 100));
-  }, 200);
+  // Bright double tap at the top
+  setTimeout(() => kSyn.triggerAttackRelease("G6", "8n"), run.length * 80 + 60);
+  setTimeout(() => kSyn.triggerAttackRelease("C7", "4n"), run.length * 80 + 160);
 }
+
+// Stone press sound (used in intro)
+function playStonePress() {
+  if (!audioReady) return;
+  const pSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.02, decay: 2.5, sustain: 0.02, release: 3.5 } }).connect(new Tone.Gain(0.1).connect(synths.fxRev));
+  const kSyn = new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.003, decay: 2, sustain: 0, release: 2.5 } }).connect(new Tone.Gain(0.06).connect(synths.fxRev));
+  const deepSyn = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 2, sustain: 0.02, release: 3 } }).connect(new Tone.Gain(0.08).connect(synths.fxRev));
+  deepSyn.triggerAttackRelease("C3", "2n");
+  setTimeout(() => pSyn.triggerAttackRelease("G3", "2n"), 80);
+  setTimeout(() => pSyn.triggerAttackRelease("C4", "4n"), 200);
+  setTimeout(() => pSyn.triggerAttackRelease("E4", "4n"), 340);
+  setTimeout(() => kSyn.triggerAttackRelease("G4", "8n"), 480);
+  setTimeout(() => kSyn.triggerAttackRelease("C5", "8n"), 600);
+  setTimeout(() => kSyn.triggerAttackRelease("E5", "8n"), 720);
+}
+
 
 /* ─── INTERSECTION OBSERVER ─── */
 function useInView(opts = {}) {
@@ -469,6 +520,9 @@ const Icon = {
   clipboard: (sz = 14, c = "currentColor") => (
     <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="10" height="11" rx="1.5" stroke={c} strokeWidth="1.2"/><path d="M6 1.5h4a.5.5 0 01.5.5v1a.5.5 0 01-.5.5H6a.5.5 0 01-.5-.5V2a.5.5 0 01.5-.5z" stroke={c} strokeWidth="1.1"/></svg>
   ),
+  calendar: (sz = 14, c = "currentColor") => (
+    <svg width={sz} height={sz} viewBox="0 0 16 16" fill="none"><rect x="2" y="3" width="12" height="11" rx="1.5" stroke={c} strokeWidth="1.2"/><path d="M2 6.5h12" stroke={c} strokeWidth="1.1"/><path d="M5.5 1.5v3M10.5 1.5v3" stroke={c} strokeWidth="1.2" strokeLinecap="round"/></svg>
+  ),
 };
 
 /* ─── PASO LOADING ORB ─── */
@@ -557,36 +611,30 @@ const INK22 = "rgba(26,26,46,0.3)";
 const INK12 = "rgba(26,26,46,0.14)";
 const INK08 = "rgba(26,26,46,0.1)";
 
-/* ─── API ─── */
-async function callClaude(system, userMsg, maxTokens = 1024, _retry = true) {
+/* ─── API — prompts are server-side in /api/generate ─── */
+async function callAPI(action, data, _retry = true) {
   try {
     const res = await fetch("/api/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system: sanitize(system, 4000),
-        userMsg: sanitize(userMsg, 12000),
-        maxTokens,
-      }),
+      headers: API_HEADERS,
+      body: JSON.stringify({ action, ...data }),
     });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
       throw new Error(errData?.error || `API error: ${res.status}`);
     }
-    const data = await res.json();
-    const text = data.content.map((c) => c.text || "").join("");
+    const resp = await res.json();
+    const text = resp.content.map((c) => c.text || "").join("");
     const firstBrace = text.indexOf("{");
     const lastBrace = text.lastIndexOf("}");
     if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
       throw new Error("No valid JSON in response");
     }
-    const jsonStr = text.substring(firstBrace, lastBrace + 1);
-    return JSON.parse(jsonStr);
+    return JSON.parse(text.substring(firstBrace, lastBrace + 1));
   } catch (e) {
-    // Silent retry once
     if (_retry) {
       console.warn("Retrying API call:", e.message);
-      return callClaude(system, userMsg, maxTokens, false);
+      return callAPI(action, data, false);
     }
     console.error("API failed after retry:", e.message);
     throw new Error("Something went wrong. Please try again.");
@@ -594,115 +642,75 @@ async function callClaude(system, userMsg, maxTokens = 1024, _retry = true) {
 }
 
 async function generateQuestions(goal) {
-  return callClaude(
-    `You are Paso, an AI roadmap generator. Given a goal, generate smart follow-up questions to personalize the roadmap.
-
-Respond with ONLY valid JSON. Start with { and end with }. No markdown, no backticks.
-
-{"intro":"A short encouraging 1-sentence acknowledgment of their goal","questions":[{"id":"q1","question":"text","type":"select","options":["A","B","C"]},{"id":"q2","question":"text","type":"multi_select","options":["A","B","C"]},{"id":"q3","question":"text","type":"select","options":["A","B","C"]},{"id":"q4","question":"text","type":"text","placeholder":"example text"}]}
-
-Generate exactly 4 questions:
-- Each has type: "select" (pick one), "multi_select" (pick multiple), or "text" (free text)
-- Use "select" for single-answer questions (timeline, experience level)
-- Use "multi_select" for multi-answer questions (interests, motivations, constraints)
-- Last question MUST be type "text" with "placeholder" field
-- Have at least 1 select, at least 1 multi_select, exactly 1 text (last)
-- Options: concise, max 6 words each, 3-4 options
-- Conversational tone, each question should meaningfully change the roadmap`,
-    `Goal: ${goal}`
-  );
+  return callAPI("questions", { goal: sanitize(goal, 500) });
 }
 
 async function generateRoadmap(goal, answers, extras) {
-  const context = answers.map((a) => {
-    const val = Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
-    const extra = extras && extras[a.id] ? ` (additional context: ${extras[a.id]})` : "";
-    return `${a.question}: ${val}${extra}`;
-  }).join("\n");
-  return callClaude(
-    `You are Paso, an AI roadmap generator by Numina Labs. Create a deeply personalized, evidence-based roadmap.
-
-You MUST respond with ONLY valid JSON. Start directly with { and end with }. No markdown, no backticks, no preamble.
-
-{
-  "goal": "the goal restated in max 6 words — short, sharp, memorable. NOT a full sentence. Examples: 'Launch my first startup', 'Become a working model', 'Run a sub-2h half marathon'",
-  "timeline": "realistic timeframe like '24 weeks' or '6 months'",
-  "tagline": "one short inspiring line, max 8 words",
-  "summary": "1-2 sentences max about the approach, referencing their situation",
-  "closingQuote": "A real, verified quote from someone notable in this specific field or in goal-setting. Must be a real quote from a real person — not made up. Format: the quote text only.",
-  "closingQuoteAuthor": "Full name and brief role, e.g. 'Coco Chanel, fashion designer' or 'Elon Musk, entrepreneur'",
-  "phases": [
-    {
-      "title": "phase name (2-3 words max)",
-      "weeks": "Weeks 1-4",
-      "description": "1-2 sentences personalized to their context",
-      "milestones": ["4 specific measurable milestones"],
-      "actions": ["3 concrete actions to start THIS week"],
-      "insight": "One concise insight with a specific scientific reference (researcher, year). Max 2 sentences. Example: 'Deliberate practice matters more than talent — Ericsson et al., 1993.'",
-      "sideQuest": "One fun bonus activity that accelerates progress. Max 1-2 sentences. Be specific and unexpected.",
-      "realityCheck": "ONLY for Phase 1. An honest, grounding reality check about this goal — common pitfalls, realistic expectations, or hard truths. Honest but hopeful. 2-3 sentences. For phases 2-4, set this to null."
-    }
-  ]
-}
-
-CRITICAL RULES:
-- Create exactly 4 phases
-- Phase 1 MUST include a non-null realityCheck — be honest about common mistakes and realistic timelines, but keep it encouraging. Phases 2-4 should have realityCheck set to null.
-- Every "insight" MUST include a specific scientific reference (study, researcher, year, or book). Use real research — Ericsson, Dweck, Duckworth, Kahneman, Cialdini, etc. Match the research to the domain.
-- Every "sideQuest" should feel like a fun detour that secretly accelerates growth. Include a brief research backing if possible.
-- Phase titles should be short and evocative (2-3 words max)
-- The closingQuote MUST be a real quote from a real person in this specific industry or domain. Do NOT invent quotes.
-- Make everything specific to THEIR situation
-- The roadmap should feel written by a mentor who reads research papers`,
-    `Goal: ${goal}\n\nContext:\n${context}`,
-    4096
-  );
+  return callAPI("roadmap", {
+    goal: sanitize(goal, 500),
+    answers: answers.map((a) => ({
+      id: a.id,
+      question: a.question,
+      answer: a.answer,
+    })),
+    extras,
+  });
 }
 
 async function breakdownPhase(goal, phase, mode) {
-  const system = mode === "mini"
-    ? `You are Paso, an AI roadmap generator. Break the given phase into a 4-step mini-roadmap.
+  return callAPI("breakdown", {
+    goal: sanitize(goal, 500),
+    phase: {
+      title: phase.title,
+      weeks: phase.weeks,
+      description: phase.description,
+      milestones: phase.milestones,
+      actions: phase.actions,
+    },
+    mode,
+  });
+}
 
-You MUST respond with ONLY valid JSON. Start directly with { — no markdown, no backticks, no preamble.
-
-{"steps":[{"title":"Step name","timeline":"e.g. Days 1-3","description":"2 sentences describing what to do and why.","actions":["Specific action 1","Specific action 2","Specific action 3"]}]}
-
-Create exactly 4 steps. Each step must have title, timeline, description, and 2-3 actions. Be specific and actionable.`
-    : `You are Paso, an AI roadmap generator. Convert the given phase into a detailed daily schedule for 2 weeks.
-
-You MUST respond with ONLY valid JSON. Start directly with { — no markdown, no backticks, no preamble.
-
-{"weeks":[{"week":1,"days":[{"day":"Monday","tasks":["Specific task 1","Specific task 2"]}]}]}
-
-Create exactly 2 weeks. Each week has 5-7 days. Each day has 2-3 specific tasks. Be practical and actionable.`;
-
-  return callClaude(
-    system,
-    `Goal: ${goal}\nPhase: ${phase.title} (${phase.weeks})\nDescription: ${phase.description}\nMilestones: ${phase.milestones.join("; ")}\nActions: ${phase.actions.join("; ")}`,
-    3072
-  );
+async function adjustRoadmap(goal, roadmap, adjustInput, completedMilestones) {
+  return callAPI("adjust", {
+    goal: sanitize(goal, 500),
+    roadmap,
+    adjustInput: sanitize(adjustInput, 1000),
+    completedMilestones,
+  });
 }
 
 /* ─── CHECKABLE MILESTONE ─── */
-function Milestone({ text, checked, onToggle }) {
+function Milestone({ text, checked, onToggle, onSchedule, scheduled }) {
   return (
-    <div onClick={onToggle} style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "flex-start", cursor: "pointer", userSelect: "none" }}>
-      <div style={{
-        width: 16, height: 16, borderRadius: 5, flexShrink: 0, marginTop: 2,
-        border: checked ? "none" : "1.5px solid rgba(108,92,231,0.25)",
-        background: checked ? ACCENT : "transparent",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        transition: "all 0.3s ease",
-        boxShadow: checked ? "0 2px 8px rgba(108,92,231,0.25)" : "none",
-      }}>
-        {checked && Icon.check(10, "#fff")}
+    <div style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "flex-start" }}>
+      <div onClick={onToggle} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", userSelect: "none", flex: 1 }}>
+        <div style={{
+          width: 16, height: 16, borderRadius: 5, flexShrink: 0, marginTop: 2,
+          border: checked ? "none" : "1.5px solid rgba(108,92,231,0.25)",
+          background: checked ? ACCENT : "transparent",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "all 0.3s ease",
+          boxShadow: checked ? "0 2px 8px rgba(108,92,231,0.25)" : "none",
+        }}>
+          {checked && Icon.check(10, "#fff")}
+        </div>
+        <span style={{
+          ...B, fontSize: 13, lineHeight: 1.5,
+          color: checked ? INK25 : INK60,
+          textDecoration: checked ? "line-through" : "none",
+          transition: "all 0.3s ease",
+        }}>{text}</span>
       </div>
-      <span style={{
-        ...B, fontSize: 13, lineHeight: 1.5,
-        color: checked ? INK25 : INK60,
-        textDecoration: checked ? "line-through" : "none",
-        transition: "all 0.3s ease",
-      }}>{text}</span>
+      {onSchedule && !checked && (
+        <button onClick={(e) => { e.stopPropagation(); onSchedule(); }} style={{
+          background: scheduled ? "rgba(108,92,231,0.08)" : "transparent",
+          border: "none", cursor: "pointer", padding: 4, borderRadius: 6, flexShrink: 0, marginTop: 0,
+          transition: "all 0.2s",
+        }} title={scheduled ? "Scheduled!" : "Add to calendar"}>
+          {scheduled ? Icon.check(12, "#00b894") : Icon.calendar(14, INK22)}
+        </button>
+      )}
     </div>
   );
 }
@@ -847,6 +855,63 @@ function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone
   const [showBreakdownChoice, setShowBreakdownChoice] = useState(false);
   const [celebrated, setCelebrated] = useState(false);
 
+  // Calendar scheduling state
+  const [schedulingIdx, setSchedulingIdx] = useState(null); // which milestone is being scheduled
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduledSet, setScheduledSet] = useState({}); // { milestoneIdx: true }
+
+  const handleScheduleMilestone = (milestoneIdx) => {
+    if (schedulingIdx === milestoneIdx) { setSchedulingIdx(null); return; }
+    // Default to tomorrow 9am
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    const local = new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    setScheduleDate(local);
+    setSchedulingIdx(milestoneIdx);
+  };
+
+  const confirmSchedule = (milestoneIdx) => {
+    if (!scheduleDate) return;
+    const milestone = phase.milestones[milestoneIdx];
+    const ics = generateICS(
+      milestone,
+      `Paso roadmap · ${phase.title}\nGoal: ${goal}`,
+      scheduleDate,
+      60
+    );
+    downloadICS(ics, `paso-${phase.title.replace(/\s+/g, "-").toLowerCase()}-${milestoneIdx + 1}.ics`);
+    setScheduledSet((prev) => ({ ...prev, [milestoneIdx]: true }));
+    setSchedulingIdx(null);
+    playRevealChime();
+  };
+
+  const scheduleAllRemaining = () => {
+    const unchecked = phase.milestones
+      .map((m, i) => ({ text: m, idx: i }))
+      .filter((m) => !checkedMilestones[`${index}-${m.idx}`]);
+    if (unchecked.length === 0) return;
+    // Space milestones evenly: start tomorrow, one every 3 days
+    const start = new Date();
+    start.setDate(start.getDate() + 1);
+    start.setHours(9, 0, 0, 0);
+    const events = unchecked.map((m, i) => {
+      const d = new Date(start.getTime() + i * 3 * 24 * 60 * 60 * 1000);
+      return {
+        title: m.text,
+        description: `Paso · ${phase.title}\nGoal: ${goal}`,
+        start: d.toISOString(),
+        duration: 60,
+      };
+    });
+    const ics = generateBulkICS(events);
+    downloadICS(ics, `paso-${phase.title.replace(/\s+/g, "-").toLowerCase()}-all.ics`);
+    const newScheduled = {};
+    unchecked.forEach((m) => { newScheduled[m.idx] = true; });
+    setScheduledSet((prev) => ({ ...prev, ...newScheduled }));
+    playRevealChime();
+  };
+
   // Phase completion detection
   const phaseComplete = phase.milestones.every((_, i) => checkedMilestones[`${index}-${i}`]);
   const prevComplete = useRef(false);
@@ -924,11 +989,60 @@ function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone
               <div>
                 <div style={{ ...M, fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: INK25, marginBottom: 16 }}>Milestones</div>
                 {phase.milestones.map((m, i) => (
-                  <Milestone key={i} text={m}
-                    checked={checkedMilestones[`${index}-${i}`] || false}
-                    onToggle={() => onToggleMilestone(`${index}-${i}`)}
-                  />
+                  <div key={i}>
+                    <Milestone text={m}
+                      checked={checkedMilestones[`${index}-${i}`] || false}
+                      onToggle={() => onToggleMilestone(`${index}-${i}`)}
+                      onSchedule={() => handleScheduleMilestone(i)}
+                      scheduled={!!scheduledSet[i]}
+                    />
+                    {schedulingIdx === i && (
+                      <div style={{
+                        marginLeft: 26, marginBottom: 14, padding: "10px 12px",
+                        background: "rgba(108,92,231,0.04)", borderRadius: 10,
+                        border: "1px solid rgba(108,92,231,0.1)",
+                      }}>
+                        <div style={{ ...M, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: INK25, marginBottom: 8 }}>
+                          Schedule this milestone
+                        </div>
+                        <input
+                          type="datetime-local"
+                          value={scheduleDate}
+                          onChange={(e) => setScheduleDate(e.target.value)}
+                          style={{
+                            ...B, fontSize: 13, width: "100%", padding: "8px 10px",
+                            borderRadius: 8, border: "1px solid rgba(108,92,231,0.15)",
+                            background: "rgba(255,255,255,0.7)", color: INK,
+                            marginBottom: 8, outline: "none",
+                          }}
+                        />
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button onClick={() => confirmSchedule(i)} style={{
+                            ...M, fontSize: 11, flex: 1, padding: "8px 12px",
+                            borderRadius: 8, border: "none", cursor: "pointer",
+                            background: ACCENT, color: "#fff",
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                          }}>{Icon.calendar(12, "#fff")} Add to calendar</button>
+                          <button onClick={() => setSchedulingIdx(null)} style={{
+                            ...M, fontSize: 11, padding: "8px 12px",
+                            borderRadius: 8, border: "1px solid rgba(26,26,46,0.08)",
+                            background: "transparent", color: INK30, cursor: "pointer",
+                          }}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ))}
+                {/* Schedule all remaining */}
+                {phase.milestones.some((_, i) => !checkedMilestones[`${index}-${i}`]) && (
+                  <button onClick={scheduleAllRemaining} style={{
+                    ...M, fontSize: 10, width: "100%", padding: "8px 12px", marginTop: 4,
+                    borderRadius: 8, cursor: "pointer",
+                    border: "1px dashed rgba(108,92,231,0.2)", background: "transparent", color: ACCENT,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                    opacity: 0.7, transition: "opacity 0.2s",
+                  }}>{Icon.calendar(12, ACCENT)} Schedule all to calendar</button>
+                )}
               </div>
               <div>
                 <div style={{ ...M, fontSize: 8, letterSpacing: "0.16em", textTransform: "uppercase", color: INK25, marginBottom: 16 }}>Start this week</div>
@@ -988,13 +1102,9 @@ function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone
               ) : (
                 <Glass style={{ padding: "16px 20px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ ...B, fontSize: 13, color: INK50 }}>Want to go deeper?</span>
-                  <button onClick={() => onBuyBreakdown("single")}
-                    style={{ ...M, fontSize: 10, padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(108,92,231,0.2)", background: "rgba(108,92,231,0.06)", color: ACCENT, cursor: "pointer", transition: "all 0.3s ease" }}>
-                    1 breakdown — €2
-                  </button>
-                  <button onClick={() => onBuyBreakdown("unlimited")}
+                  <button onClick={() => { onBuyBreakdown("unlimited"); }}
                     style={{ ...M, fontSize: 10, padding: "8px 16px", borderRadius: 10, border: "none", background: ACCENT, color: "#fff", cursor: "pointer", transition: "all 0.3s ease" }}>
-                    Unlimited — €3
+                    Break it down (included)
                   </button>
                 </Glass>
               )
@@ -1237,10 +1347,204 @@ const EXAMPLE_PREVIEWS = {
 };
 
 /* ─── MAIN ─── */
+// ─── INTRO STONE CANVAS ───
+function IntroStone({ mob, onPress }) {
+  const canvasRef = useRef(null);
+  const onPressRef = useRef(onPress);
+  onPressRef.current = onPress;
+  const stateRef = useRef({ pressed: false, fadeOut: false, floatT: 0, stoneY: 0, stoneScl: 1, glowStr: 0.35, fadeAlpha: 1, mouseX: -999, mouseY: -999, tiles: [] });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const st = stateRef.current;
+    let W, H, cx, cy, S, BR, GAP, ELEV, animId;
+
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      cx = W / 2; cy = H / 2 - 20;
+      S = mob ? 30 : 38;
+      BR = mob ? 7 : 9;
+      GAP = mob ? 3.5 : 4.5;
+      ELEV = mob ? 5 : 7;
+      // Build grid
+      const hStep = S * 1.5 + GAP;
+      const vStep = S * Math.sqrt(3) + GAP;
+      const cols = Math.ceil(W / hStep) + 4;
+      const rows = Math.ceil(H / vStep) + 4;
+      st.tiles = [];
+      for (let row = -Math.floor(rows/2); row <= Math.floor(rows/2); row++) {
+        for (let col = -Math.floor(cols/2); col <= Math.floor(cols/2); col++) {
+          const x = cx + col * hStep + (Math.abs(row) % 2 === 1 ? hStep / 2 : 0);
+          const y = cy + row * vStep;
+          const dist = Math.sqrt((x-cx)**2 + (y-cy)**2);
+          if (dist < S * 1.8) continue;
+          st.tiles.push({ x, y, dist });
+        }
+      }
+    }
+    resize();
+    window.addEventListener("resize", resize);
+
+    function hexPath(x, y, r, br, offy) {
+      const pts = [0,60,120,180,240,300].map(a => {
+        const rad = (a - 90) * Math.PI / 180;
+        return { x: x + r * Math.cos(rad), y: y + r * Math.sin(rad) + (offy||0) };
+      });
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const c = pts[i], p = pts[(i+5)%6], n = pts[(i+1)%6];
+        const pL = Math.sqrt((p.x-c.x)**2+(p.y-c.y)**2);
+        const nL = Math.sqrt((n.x-c.x)**2+(n.y-c.y)**2);
+        const p1 = { x: c.x+(p.x-c.x)/pL*br, y: c.y+(p.y-c.y)/pL*br };
+        const p2 = { x: c.x+(n.x-c.x)/nL*br, y: c.y+(n.y-c.y)/nL*br };
+        if (i===0) ctx.moveTo(p1.x, p1.y); else ctx.lineTo(p1.x, p1.y);
+        ctx.quadraticCurveTo(c.x, c.y, p2.x, p2.y);
+      }
+      ctx.closePath();
+    }
+
+    function draw() {
+      const bg = ctx.createLinearGradient(0, 0, W * 0.6, H);
+      bg.addColorStop(0, "#f8f5ff"); bg.addColorStop(0.5, "#eef6f3"); bg.addColorStop(1, "#f2f0ff");
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = st.fadeAlpha;
+      const maxDist = Math.max(W, H) * 0.48;
+      const stoneCY = cy + st.stoneY + Math.sin(st.floatT) * (mob ? 3.5 : 5);
+
+      // White tiles
+      st.tiles.forEach(t => {
+        const fade = Math.max(0, 1 - t.dist / maxDist);
+        if (fade < 0.03) return;
+        const mDist = Math.sqrt((t.x - st.mouseX)**2 + (t.y - st.mouseY)**2);
+        const hLift = Math.max(0, 1 - mDist / (mob ? 80 : 120)) * (mob ? 1.5 : 2.5);
+        const hBright = Math.max(0, 1 - mDist / (mob ? 100 : 140)) * 0.06;
+
+        // Shadow (hex shaped)
+        ctx.globalAlpha = fade * 0.18 * st.fadeAlpha;
+        hexPath(t.x, t.y, S, BR, ELEV - hLift); ctx.fillStyle = "#ccc8d8"; ctx.fill();
+        // Face
+        ctx.globalAlpha = fade * 0.5 * st.fadeAlpha;
+        hexPath(t.x, t.y, S, BR, -hLift);
+        ctx.fillStyle = `rgb(${248+hBright*80},${248+hBright*60},${252+hBright*30})`; ctx.fill();
+        // Highlight
+        ctx.globalAlpha = fade * 0.15 * st.fadeAlpha;
+        hexPath(t.x, t.y-1, S*0.85, BR*0.8, -hLift); ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fill();
+      });
+
+      ctx.globalAlpha = st.fadeAlpha;
+
+      // Glow under stone
+      const glGrad = ctx.createRadialGradient(cx, stoneCY+ELEV+12, 0, cx, stoneCY+ELEV+12, S*2.5);
+      glGrad.addColorStop(0, "rgba(147,130,255,"+(st.glowStr)+")");
+      glGrad.addColorStop(0.35, "rgba(134,200,255,"+(st.glowStr*0.5)+")");
+      glGrad.addColorStop(0.6, "rgba(134,239,172,"+(st.glowStr*0.2)+")");
+      glGrad.addColorStop(1, "transparent");
+      ctx.fillStyle = glGrad; ctx.beginPath();
+      ctx.ellipse(cx, stoneCY+ELEV+12, S*2.5, S*0.8, 0, 0, Math.PI*2); ctx.fill();
+
+      // Stone
+      ctx.save();
+      ctx.translate(cx, stoneCY); ctx.scale(st.stoneScl, st.stoneScl); ctx.translate(-cx, -stoneCY);
+
+      // Shadow (hex shaped, offset down, soft)
+      ctx.globalAlpha = 0.22 * st.fadeAlpha;
+      hexPath(cx, stoneCY, S*0.97, BR, ELEV+5); ctx.fillStyle = "rgba(60,50,110,0.45)"; ctx.fill();
+      ctx.globalAlpha = 0.12 * st.fadeAlpha;
+      hexPath(cx, stoneCY, S*1.02, BR, ELEV+8); ctx.fillStyle = "rgba(60,50,110,0.25)"; ctx.fill();
+      // Side face (elevation depth)
+      ctx.globalAlpha = st.fadeAlpha;
+      hexPath(cx, stoneCY, S, BR, ELEV);
+      const sg = ctx.createLinearGradient(cx, stoneCY, cx, stoneCY+ELEV);
+      sg.addColorStop(0, "rgba(140,128,210,0.35)"); sg.addColorStop(1, "rgba(100,90,170,0.15)");
+      ctx.fillStyle = sg; ctx.fill();
+      // Main face — smooth violet-to-lavender gradient
+      hexPath(cx, stoneCY, S, BR, 0);
+      const stG = ctx.createLinearGradient(cx-S*0.7, stoneCY-S*0.8, cx+S*0.7, stoneCY+S*0.8);
+      stG.addColorStop(0, "#b5a8f0"); stG.addColorStop(0.35, "#a4b4f4");
+      stG.addColorStop(0.65, "#9ac2f4"); stG.addColorStop(1, "#92cee8");
+      ctx.fillStyle = stG; ctx.fill();
+      // Highlight
+      ctx.globalAlpha = 0.35 * st.fadeAlpha;
+      hexPath(cx, stoneCY-2, S*0.82, BR*0.8, 0);
+      const hl = ctx.createLinearGradient(cx, stoneCY-S, cx, stoneCY);
+      hl.addColorStop(0, "rgba(255,255,255,0.5)"); hl.addColorStop(0.6, "rgba(255,255,255,0.08)"); hl.addColorStop(1, "transparent");
+      ctx.fillStyle = hl; ctx.fill();
+      // Rim
+      ctx.globalAlpha = st.fadeAlpha;
+      hexPath(cx, stoneCY, S, BR, 0); ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.restore();
+
+      // Text
+      ctx.globalAlpha = Math.min(st.fadeAlpha, 0.2);
+      ctx.font = "600 11px 'DM Sans', sans-serif"; ctx.textAlign = "center"; ctx.letterSpacing = "3px";
+      ctx.fillStyle = "#1a1a2e"; ctx.fillText("P A S O", cx, stoneCY + S + 36);
+      ctx.globalAlpha = Math.min(st.fadeAlpha, 0.15);
+      ctx.font = "italic 12px 'DM Sans', sans-serif";
+      ctx.fillText(mob ? "Tap to take your first step" : "Click to take your first step", cx, stoneCY + S + 56);
+      ctx.globalAlpha = 1;
+    }
+
+    function animate() {
+      if (!st.pressed) st.floatT += 0.018;
+      st.glowStr = 0.3 + Math.sin(st.floatT * 0.8) * 0.12;
+      draw();
+      animId = requestAnimationFrame(animate);
+    }
+    animate();
+
+    const onMove = (e) => { st.mouseX = e.clientX; st.mouseY = e.clientY; };
+    const onTouch = (e) => { st.mouseX = e.touches[0].clientX; st.mouseY = e.touches[0].clientY; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("touchmove", onTouch);
+
+    const onClick = (e) => {
+      if (st.pressed || st.fadeOut) return;
+      const dx = e.clientX - cx, dy = e.clientY - (cy + Math.sin(st.floatT) * 5);
+      if (Math.sqrt(dx*dx + dy*dy) > S * 2.2) return;
+      st.pressed = true;
+      onPressRef.current();
+      // Press animation
+      const dur = 650, start = performance.now();
+      function animPress(now) {
+        const t = Math.min((now - start) / dur, 1);
+        if (t < 0.3) { st.stoneY = (t/0.3)*12; st.stoneScl = 1-(t/0.3)*0.04; st.glowStr = 0.35+(t/0.3)*0.5; }
+        else if (t < 0.6) { const p=(t-0.3)/0.3; st.stoneY = 12-p*16; st.stoneScl = 0.96+p*0.06; st.glowStr = 0.85-p*0.3; }
+        else { const p=(t-0.6)/0.4; st.stoneY = -4+p*4; st.stoneScl = 1.02-p*0.02; st.glowStr = 0.55-p*0.2; }
+        if (t < 1) requestAnimationFrame(animPress);
+        else { st.stoneY=0; st.stoneScl=1; st.fadeOut=true;
+          const fs = performance.now();
+          function animFade(n2) { const ft=Math.min((n2-fs)/700,1); st.fadeAlpha=1-ft; if(ft<1) requestAnimationFrame(animFade); }
+          setTimeout(() => requestAnimationFrame(animFade), 200);
+        }
+      }
+      requestAnimationFrame(animPress);
+    };
+    canvas.addEventListener("click", onClick);
+    canvas.addEventListener("touchstart", (e) => {
+      const t = e.touches[0];
+      canvas.dispatchEvent(new MouseEvent("click", { clientX: t.clientX, clientY: t.clientY }));
+    });
+
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("touchmove", onTouch);
+      canvas.removeEventListener("click", onClick);
+    };
+  }, [mob]);
+
+  return <canvas ref={canvasRef} style={{ position: "fixed", inset: 0, zIndex: 200, display: "block", cursor: "pointer" }} />;
+}
+
 export default function PasoLive() {
   const mob = useIsMobile();
   const [inputValue, setInputValue] = useState("");
-  const [step, setStep] = useState("landing");
+  const [step, setStep] = useState("intro");
+  // stonePressed handled internally by IntroStone canvas
   const [questions, setQuestions] = useState(null);
   const [questionsIntro, setQuestionsIntro] = useState("");
   const [answers, setAnswers] = useState({});
@@ -1262,6 +1566,9 @@ export default function PasoLive() {
   const [goal, setGoal] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [breakdownCredits, setBreakdownCredits] = useState(0); // 0 = none, -1 = unlimited
+  const [credits, setCredits] = useState(0);
+  const [selectedPack, setSelectedPack] = useState(null);
+  const [hasPurchased, setHasPurchased] = useState(false);
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [shareId, setShareId] = useState(null);
@@ -1269,38 +1576,123 @@ export default function PasoLive() {
   const [showSharePopup, setShowSharePopup] = useState(false);
   const [isSharedView, setIsSharedView] = useState(false);
   const [showInstallTip, setShowInstallTip] = useState(false);
+
+
   // Adjust roadmap
   const [showAdjust, setShowAdjust] = useState(false);
   const [adjustInput, setAdjustInput] = useState("");
   const [adjusting, setAdjusting] = useState(false);
-  // Weekly nudge
+  // Weekly nudge (push notifications)
   const [showNudgeSetup, setShowNudgeSetup] = useState(false);
-  const [nudgePhone, setNudgePhone] = useState("");
   const [nudgeSaved, setNudgeSaved] = useState(false);
   const [nudgeFrequency, setNudgeFrequency] = useState("weekly");
+  const [pushStatus, setPushStatus] = useState("idle"); // idle, requesting, granted, denied, error
+  const [userName, setUserName] = useState("");
+  const [showWelcomeBack, setShowWelcomeBack] = useState(false);
+  // Accountability is inline now — no popup needed
   const [liveCount, setLiveCount] = useState(null);
   const phaseRefs = useRef([]);
+
+  // PWA meta tags — NO MANIFEST on purpose
+  // iOS behavior: WITH manifest → uses start_url (we can't control this dynamically)
+  //               WITHOUT manifest → uses CURRENT BROWSER URL (exactly what we want!)
+  // apple-mobile-web-app-capable gives standalone mode without needing a manifest.
+  // After saving a roadmap, handleSave sets URL to /?r=shareId
+  // When user taps "Add to Home Screen", iOS saves that URL.
+  useEffect(() => {
+    const ensureMeta = (name, content) => {
+      let el = document.querySelector(`meta[name="${name}"]`);
+      if (!el) { el = document.createElement("meta"); el.name = name; document.head.appendChild(el); }
+      el.content = content;
+    };
+    ensureMeta("apple-mobile-web-app-capable", "yes");
+    ensureMeta("apple-mobile-web-app-status-bar-style", "black-translucent");
+    ensureMeta("apple-mobile-web-app-title", "Paso");
+    ensureMeta("theme-color", "#6C5CE7");
+
+    // REMOVE any manifest link that Next.js or previous code may have added
+    // This is critical — if a manifest exists, iOS uses its start_url instead of the browser URL
+    const existingManifest = document.querySelector('link[rel="manifest"]');
+    if (existingManifest) existingManifest.remove();
+  }, [shareId]);
 
   // Fetch live roadmap count
   useEffect(() => { fetchRoadmapCount().then((n) => { if (n > 0) setLiveCount(n); }); }, []);
 
-  // Check URL for shared roadmap on mount
+  // Check URL for shared roadmap on mount — only ?r= query param or #/r/ hash
+  // NO localStorage — each roadmap is accessed only by its URL.
+  // PWA homescreen uses ?r= (browser URL saved by iOS), shared links use #/r/
   useEffect(() => {
     const hash = window.location.hash;
-    const match = hash.match(/#\/r\/([a-z0-9]+)/);
-    if (match) {
-      const id = match[1];
+    const hashMatch = hash.match(/#\/r\/([a-z0-9]+)/);
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryId = urlParams.get("r");
+
+    // Priority: query param (PWA homescreen / saved) → hash (shared link)
+    const idToLoad = queryId || (hashMatch ? hashMatch[1] : null);
+
+    if (idToLoad) {
+      // Normalize URL to always use ?r= format (iOS homescreen needs this)
+      if (hashMatch && !queryId) {
+        window.history.replaceState(null, "", `/?r=${hashMatch[1]}`);
+      }
       setStep("loadingR");
-      loadRoadmap(id).then((data) => {
-        setRoadmap(data.roadmap);
+      loadRoadmap(idToLoad).then((data) => {
+        setRoadmap(data.roadmap_json ? (typeof data.roadmap_json === "string" ? JSON.parse(data.roadmap_json) : data.roadmap_json) : data.roadmap);
         setGoal(data.goal);
-        setShareId(id);
+        setShareId(idToLoad);
         setIsSharedView(true);
         setUnlocked(true);
+        setBreakdownCredits(-1);
+        if (data.user_name) setUserName(data.user_name);
         if (data.progress && typeof data.progress === "object") {
-          setCheckedMilestones(data.progress);
+          const { _credits: savedCredits, ...milestones } = data.progress;
+          setCheckedMilestones(milestones);
+          if (typeof savedCredits === "number" && savedCredits > 0) setCredits(savedCredits);
+        }
+        // Restore nudge state from Supabase
+        if (data.nudge_enabled) {
+          setNudgeSaved(true);
+          if (data.nudge_frequency) setNudgeFrequency(data.nudge_frequency);
+          // Check if push is still active in this browser
+          if ("serviceWorker" in navigator && "PushManager" in window) {
+            navigator.serviceWorker.ready.then((reg) => {
+              reg.pushManager.getSubscription().then((sub) => {
+                setPushStatus(sub ? "granted" : "idle");
+              });
+            }).catch(() => {});
+          }
         }
         setStep("roadmap");
+        // Show welcome-back popup if opened from homescreen (query param, not hash link)
+        if (queryId) setTimeout(() => setShowWelcomeBack(true), 600);
+        // iOS PWA blocks audio autoplay — even touchstart handlers can lose gesture context
+        // Set sound OFF initially; user can tap the sound toggle (which works reliably)
+        // OR: auto-resume on first tap by creating AudioContext synchronously in gesture
+        setSoundEnabled(false);
+        const startOnTap = async () => {
+          try {
+            // Create/resume AudioContext synchronously in gesture — iOS requires this
+            if (typeof AudioContext !== "undefined" || typeof webkitAudioContext !== "undefined") {
+              const AC = AudioContext || webkitAudioContext;
+              const ctx = Tone.context.rawContext || new AC();
+              if (ctx.state !== "running") ctx.resume();
+            }
+            await initAudio();
+            if (audioReady) {
+              setSoundEnabled(true);
+              startAmbient();
+              ambientPhase = 1; ambientElapsed = 40;
+              try {
+                fadeGain(synths.kalimbaGain, 0.09, 2);
+                fadeGain(synths.padGain, 0.016, 2);
+                synths.pad?.triggerAttackRelease(PAD_CHORDS[0], 18);
+              } catch(e) {}
+            }
+          } catch(e) { console.warn("Audio start failed:", e); }
+        };
+        document.addEventListener("touchstart", startOnTap, { once: true });
+        document.addEventListener("click", startOnTap, { once: true });
       }).catch(() => {
         setError("This roadmap link is invalid or has expired.");
         setStep("landing");
@@ -1353,7 +1745,7 @@ export default function PasoLive() {
       setLoadingProgress(100);
       if (soundEnabled) { playRevealChime(); startAmbient(); }
     }
-    if (step === "landing") stopAmbient();
+    if (step === "landing" || step === "intro") stopAmbient();
   }, [step, soundEnabled]);
 
   // Scroll tracking
@@ -1369,6 +1761,7 @@ export default function PasoLive() {
           if (r.top < window.innerHeight * 0.5 && r.bottom > window.innerHeight * 0.3) setActivePhase(i);
         }
       });
+
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -1405,17 +1798,35 @@ export default function PasoLive() {
     setStep("loadingR"); setError(null);
     try {
       const data = await generateRoadmap(goal, Object.values(answers), extras);
-      setRoadmap(data); setStep("roadmap"); window.scrollTo(0, 0);
+      setRoadmap(data); setStep("teaser"); window.scrollTo(0, 0);
     } catch (err) { setError(err.message); setStep("questions"); }
   };
 
   const handleReset = () => {
     setStep("landing"); setRoadmap(null); setQuestions(null); setAnswers({}); setExtras({});
-    setInputValue(""); setGoal(""); setError(null); setUnlocked(false);
+    setInputValue(""); setGoal(""); setError(null); setUnlocked(false); setSelectedPack(null); setHasPurchased(false); 
     setBreakdownCredits(0); setCheckedMilestones({}); setShowFinale(false);
     setFinaleTriggered(false); setShareId(null); setShareStatus(""); setIsSharedView(false);
+    setNudgeSaved(false); setPushStatus("idle"); setUserName("");
     milestoneTickCount = 0; window.scrollTo(0, 0);
-    if (window.location.hash) window.location.hash = "";
+    // Clean URL — remove both query params and hash
+    window.history.replaceState(null, "", window.location.pathname);
+  };
+
+  // Silent save — returns the shareId without showing popup
+  const ensureSaved = async () => {
+    if (shareId) return shareId;
+    try {
+      const id = await saveRoadmap(roadmap, Object.values(answers), goal);
+      setShareId(id);
+      window.history.replaceState(null, "", `/?r=${id}`);
+      // Also save credits
+      updateProgress(id, { ...checkedMilestones, _credits: credits });
+      return id;
+    } catch (e) {
+      console.error("Auto-save error:", e);
+      return null;
+    }
   };
 
   const handleSave = async () => {
@@ -1424,7 +1835,9 @@ export default function PasoLive() {
     try {
       const id = await saveRoadmap(roadmap, Object.values(answers), goal);
       setShareId(id);
-      window.location.hash = `/r/${id}`;
+      // Use query param URL (not hash) — iOS saves the browser URL for homescreen
+      // Hash fragments may be stripped, but ?r= survives
+      window.history.replaceState(null, "", `/?r=${id}`);
       setShareStatus("saved");
       setTimeout(() => setShowSharePopup(true), 400);
     } catch (e) {
@@ -1436,7 +1849,7 @@ export default function PasoLive() {
 
   const getShareLink = () => {
     if (!shareId) return "";
-    return `${window.location.origin}${window.location.pathname}#/r/${shareId}`;
+    return `${window.location.origin}/?r=${shareId}`;
   };
 
   const copyLink = async () => {
@@ -1448,7 +1861,7 @@ export default function PasoLive() {
 
   const shareWhatsApp = () => {
     const link = getShareLink();
-    const text = `Check out my ${goal} roadmap on Paso! Track my progress and keep me accountable 💪\n${link}`;
+    const text = "Check out my " + goal + " roadmap on Paso! Track my progress and keep me accountable\n" + link;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
@@ -1463,30 +1876,128 @@ export default function PasoLive() {
   };
 
   const handleNudgeSave = async () => {
-    if (!nudgePhone.trim() || !shareId) return;
+    if (!shareId) return;
+
+    // Check if push is supported
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+
+    if (!("serviceWorker" in navigator)) {
+      setPushStatus("unsupported");
+      return;
+    }
+    if (!("PushManager" in window)) {
+      setPushStatus(isIOS ? "ios-safari" : "unsupported");
+      return;
+    }
+    if (!("Notification" in window)) {
+      setPushStatus(isIOS ? "ios-safari" : "unsupported");
+      return;
+    }
+
+    setPushStatus("requesting");
     try {
-      await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-        body: JSON.stringify({ nudge_phone: sanitizePhone(nudgePhone), nudge_enabled: true, nudge_frequency: nudgeFrequency }),
+      // Register service worker
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+
+      // Request notification permission
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { setPushStatus("denied"); return; }
+
+      // Subscribe to push
+      const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!vapidKey) { console.error("VAPID key missing"); setPushStatus("error"); return; }
+
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: vapidKey,
       });
+      const subJson = JSON.stringify(sub);
+
+      // Save subscription + frequency to server
+      await patchRoadmap(shareId, { push_subscription: subJson, nudge_enabled: true, nudge_frequency: nudgeFrequency, user_name: sanitize(userName, 50) || null });
+      setPushStatus("granted");
       setNudgeSaved(true);
-    } catch (e) { console.error("Nudge save error:", e); }
+    } catch (e) {
+      console.error("Push setup error:", e);
+      if (isIOS && !isStandalone) {
+        setPushStatus("ios-safari");
+      } else {
+        setPushStatus("error");
+      }
+    }
   };
 
-  // Adjust roadmap — send changes to AI
+  const handleNudgeDisable = async () => {
+    if (!shareId) return;
+    try {
+      await patchRoadmap(shareId, { nudge_enabled: false });
+      // Unsubscribe from push on this device
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+      }
+      setNudgeSaved(false);
+      setPushStatus("idle");
+      setShowNudgeSetup(false);
+    } catch (e) {
+      console.error("Nudge disable error:", e);
+    }
+  };
+
+  const sendTestPush = async () => {
+    if (!nudgeSaved) return;
+    setPushStatus("requesting");
+    try {
+      const m1 = roadmap?.phases?.[0]?.milestones?.[0] || "Your first milestone";
+      const funTitles = userName
+        ? [`Hey ${userName}, this is what it'll look like`, `${userName}, your weekly nudge`, `Test nudge for ${userName}!`]
+        : ["This is what your nudge looks like", "Test nudge!", "Hey! Check this out"];
+      const title = funTitles[Math.floor(Math.random() * funTitles.length)];
+      const res = await fetch("/api/push", {
+        method: "POST",
+        headers: API_HEADERS,
+        body: JSON.stringify({
+          shareId,
+          title,
+          body: `Focus on: ${m1}. That's it. That's the whole plan.`,
+          url: getShareLink() || window.location.href,
+        }),
+      });
+      const data = await res.json();
+      console.log("Push API response:", data);
+      if (data.success) {
+        setPushStatus("test-sent");
+      } else {
+        console.error("Push API error:", data);
+        setPushStatus("test-error");
+      }
+    } catch (e) {
+      console.error("Push fetch error:", e);
+      setPushStatus("test-error");
+    }
+    setTimeout(() => setPushStatus("granted"), 4000);
+  };
+
+  // Adjust roadmap — send changes to AI (prompts are server-side)
   const handleAdjust = async () => {
     if (!adjustInput.trim() || adjusting) return;
     setAdjusting(true);
     try {
-      const system = `You are Paso, an AI roadmap generator by Numina Labs. The user has an existing roadmap for "${goal}" and wants to adjust it.
+      // Build list of completed milestone texts so AI knows what to preserve
+      const completedMilestones = [];
+      Object.entries(checkedMilestones).forEach(([key, val]) => {
+        if (val) {
+          const [pi, mi] = key.split("-").map(Number);
+          if (roadmap.phases[pi] && roadmap.phases[pi].milestones[mi]) {
+            completedMilestones.push(roadmap.phases[pi].milestones[mi]);
+          }
+        }
+      });
 
-IMPORTANT: First, check if the user's update is actually an adjustment to their existing goal "${goal}" or if they're asking for something completely unrelated (a new goal entirely). If it's a completely new, unrelated goal, respond with exactly: {"error": "NEW_GOAL", "message": "This sounds like a new goal rather than an adjustment. Use 'Set your next goal' instead."}
-
-If it IS a valid adjustment to the existing goal, return the FULL updated roadmap JSON in the exact same structure (phases array with title, tagline, milestones, actions, sideQuest, researchNote, researchSource, closingQuote, closingQuoteAuthor). Keep phases and milestones that are still relevant. Adapt, remove, or add phases based on the user's update. Maintain the same quality and depth. Include a new closingQuote that's relevant to the adjusted plan.`;
-      const userMsg = `Current roadmap:\n${JSON.stringify(roadmap)}\n\nUser's update: ${adjustInput}`;
-      const res = await callClaude(system, userMsg, 6000);
-      const parsed = res; // callClaude already returns parsed JSON
+      const parsed = await adjustRoadmap(goal, roadmap, adjustInput, completedMilestones);
 
       // Check if AI flagged it as a new goal
       if (parsed.error === "NEW_GOAL") {
@@ -1497,28 +2008,23 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
       }
 
       if (parsed.phases) {
+        // Match completed milestones by TEXT content, not index
         const newChecked = {};
-        Object.entries(checkedMilestones).forEach(([key, val]) => {
-          if (val) {
-            const [pi, mi] = key.split("-").map(Number);
-            if (parsed.phases[pi] && parsed.phases[pi].milestones[mi]) {
-              newChecked[key] = true;
+        const completedSet = new Set(completedMilestones);
+        parsed.phases.forEach((phase, pi) => {
+          phase.milestones.forEach((milestone, mi) => {
+            if (completedSet.has(milestone)) {
+              newChecked[`${pi}-${mi}`] = true;
             }
-          }
+          });
         });
         setRoadmap(parsed);
         setCheckedMilestones(newChecked);
         setShowAdjust(false);
         setAdjustInput("");
         if (shareId) {
-          updateProgress(shareId, newChecked);
-          try {
-            await fetch(`${SUPABASE_URL}/rest/v1/roadmaps?id=eq.${shareId}`, {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-              body: JSON.stringify({ roadmap: parsed, progress: newChecked }),
-            });
-          } catch {}
+          updateProgress(shareId, { ...newChecked, _credits: credits });
+          try { await patchRoadmap(shareId, { roadmap: parsed, progress: { ...newChecked, _credits: credits } }); } catch {}
         }
         if (soundEnabled) playUnlockSound();
       }
@@ -1530,9 +2036,41 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
     setAdjusting(false);
   };
 
+  const CREDIT_PACKS = { starter: 5, builder: 15, unlimited: 99 };
+
+  const handleSelectPack = (packId) => {
+    if (hasPurchased) return; // already bought
+    setSelectedPack(packId);
+  };
+
+  const handleConfirmPurchase = () => {
+    if (!selectedPack || hasPurchased) return;
+    const amount = CREDIT_PACKS[selectedPack] || 0;
+    // FAKE PAYWALL - replace with Stripe checkout later
+    setCredits((prev) => {
+      const newCredits = prev + amount;
+      // Save credits to Supabase immediately if roadmap is saved
+      if (shareId) {
+        updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
+      }
+      return newCredits;
+    });
+    setHasPurchased(true);
+    if (soundEnabled) playRevealChime();
+  };
+
   const handleUnlock = () => {
+    if (credits <= 0) return;
+    const newCredits = credits - 1;
+    setCredits(newCredits);
     if (soundEnabled) playUnlockSound();
     setUnlocked(true);
+    setBreakdownCredits(-1);
+    setStep("commitment");
+    // Save updated credits
+    if (shareId) {
+      updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
+    }
   };
 
   const handleBuyBreakdown = (type) => {
@@ -1560,7 +2098,7 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
     if (!shareId || Object.keys(checkedMilestones).length === 0) return;
     clearTimeout(progressSaveRef.current);
     progressSaveRef.current = setTimeout(() => {
-      updateProgress(shareId, checkedMilestones);
+      updateProgress(shareId, { ...checkedMilestones, _credits: credits });
     }, 1500);
     return () => clearTimeout(progressSaveRef.current);
   }, [checkedMilestones, shareId]);
@@ -1705,6 +2243,8 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes slideUp{from{opacity:0;transform:translateY(36px)}to{opacity:1;transform:translateY(0)}}
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes fadeOut{from{opacity:1}to{opacity:0}}
+
         @keyframes float0{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-25px,18px) scale(1.03)}}
         @keyframes float1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(18px,-22px) scale(0.97)}}
         @keyframes float2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-12px,12px) scale(1.02)}}
@@ -1750,6 +2290,12 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
             <span style={{ ...M, fontSize: 8, color: INK22, letterSpacing: "0.06em", fontStyle: "italic" }}>Spanish for step</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {/* Credits pill */}
+            {credits > 0 && step === "roadmap" && (
+              <span style={{ ...M, fontSize: 9, letterSpacing: "0.06em", color: ACCENT, background: "rgba(108,92,231,0.06)", padding: "4px 10px", borderRadius: 8, display: "flex", alignItems: "center", gap: 4 }}>
+                {Icon.check(10, ACCENT)}{credits} credits
+              </span>
+            )}
             {/* Sound toggle */}
             <button onClick={toggleSound}
               style={{
@@ -1778,6 +2324,16 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
           </div>
         </header>
         <div style={{ height: 1, background: "rgba(26,26,46,0.05)" }} />
+
+        {/* ━━━ INTRO — STEPPING STONE ━━━ */}
+        {step === "intro" && <IntroStone mob={mob} onPress={() => {
+          initAudio().then(() => {
+            setSoundEnabled(true);
+            playStonePress();
+          }).catch(() => {});
+          setTimeout(() => setStep("landing"), 1300);
+        }} />}
+
 
         {/* ━━━ LANDING ━━━ */}
         {step === "landing" && (
@@ -1965,6 +2521,170 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
         )}
 
         {/* ━━━ ROADMAP ━━━ */}
+        {/* TEASER - free action + paywall */}
+        {step === "teaser" && roadmap && (
+          <div style={{ animation: "fadeIn 0.8s ease both", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: mob ? 40 : 80 }}>
+            <Reveal>
+              <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: ACCENT, opacity: 0.6, marginBottom: 12, textAlign: "center" }}>Your roadmap is ready</div>
+              <h2 style={{ fontFamily: H, fontSize: "clamp(26px, 4vw, 40px)", fontWeight: 400, color: INK, textAlign: "center", lineHeight: 1.3, marginBottom: 8 }}>{roadmap.goal}</h2>
+              <p style={{ fontFamily: H, fontSize: 16, fontStyle: "italic", color: INK25, textAlign: "center", maxWidth: 440, marginBottom: 40 }}>{roadmap.tagline}</p>
+            </Reveal>
+
+            <Reveal delay={0.3}>
+              <Glass style={{ maxWidth: 480, padding: mob ? "24px 24px" : "28px 32px", marginBottom: 32 }}>
+                <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#00b894", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>{Icon.check(10, "#00b894")} Do this right now</div>
+                <p style={{ ...B, fontSize: 16, color: INK70, lineHeight: 1.7, marginBottom: 8 }}>{roadmap.phases[0].actions[0]}</p>
+                <p style={{ ...B, fontSize: 12, color: INK25, lineHeight: 1.5 }}>
+                  This is step one of your {roadmap.timeline} roadmap. {roadmap.phases.length} phases, {roadmap.phases.reduce((s, p) => s + p.milestones.length, 0)} milestones ahead.
+                </p>
+              </Glass>
+            </Reveal>
+
+            <Reveal delay={0.5}>
+              <div style={{ maxWidth: 480, width: "100%", marginBottom: 32, position: "relative" }}>
+                <div style={{ filter: "blur(6px)", opacity: 0.5, pointerEvents: "none", userSelect: "none" }}>
+                  {roadmap.phases.map((phase, i) => (
+                    <div key={i} style={{ padding: "14px 18px", marginBottom: 8, borderRadius: 12, background: "rgba(108,92,231,0.03)", border: "1px solid rgba(108,92,231,0.06)" }}>
+                      <div style={{ ...M, fontSize: 10, color: ACCENT, marginBottom: 4 }}>{phase.weeks}</div>
+                      <div style={{ ...B, fontSize: 14, color: INK50, fontWeight: 500 }}>{phase.title}</div>
+                      <div style={{ ...B, fontSize: 11, color: INK25, marginTop: 4 }}>{phase.milestones.length} milestones</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>{Icon.lock(24, INK30)}</div>
+              </div>
+            </Reveal>
+
+            <Reveal delay={0.7}>
+              <Glass style={{ maxWidth: 480, padding: mob ? "28px 24px" : "32px 36px", marginBottom: 24 }}>
+                <p style={{ fontFamily: H, fontSize: mob ? 20 : 24, fontWeight: 400, color: INK, lineHeight: 1.5, marginBottom: 16 }}>You just took your first step.</p>
+                <p style={{ ...B, fontSize: 14, color: INK50, lineHeight: 1.7, marginBottom: 12 }}>
+                  But a single action is not a plan. 92% of goals fail without a system. Life coaches cost over 200 an hour. Habit apps charge 5/month and still leave the planning to you.
+                </p>
+                <p style={{ ...B, fontSize: 14, color: INK60, lineHeight: 1.7, marginBottom: 20 }}>
+                  Paso gives you a full AI roadmap with checkable milestones, weekly accountability nudges, calendar scheduling, and scientific references. All for the price of a coffee.
+                </p>
+                <p style={{ ...M, fontSize: 11, color: INK30, marginBottom: 20 }}>Most people use 8-12 credits to go from idea to done.</p>
+                {!hasPurchased ? (<>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {[
+                      { id: "starter", name: "Starter", cr: 5, price: "\u20ac3", sub: "1 roadmap + extras" },
+                      { id: "builder", name: "Builder", cr: 15, price: "\u20ac7", sub: "Most popular", tag: true },
+                      { id: "unlimited", name: "Unlimited", cr: 99, price: "\u20ac12/mo", sub: "Unlimited roadmaps" },
+                    ].map((pack) => {
+                      const selected = selectedPack === pack.id;
+                      return (
+                        <button key={pack.id} onClick={() => handleSelectPack(pack.id)} style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          padding: "14px 20px", borderRadius: 14, cursor: "pointer",
+                          border: selected ? `2px solid ${ACCENT}` : "1px solid rgba(26,26,46,0.08)",
+                          background: selected ? "rgba(108,92,231,0.06)" : "rgba(255,255,255,0.6)",
+                          transition: "all 0.25s ease", position: "relative",
+                          transform: selected ? "scale(1.02)" : "scale(1)",
+                          boxShadow: selected ? "0 2px 16px rgba(108,92,231,0.15)" : "none",
+                        }}>
+                          {pack.tag && !selected && <span style={{ position: "absolute", top: -9, right: 14, ...M, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", background: ACCENT, color: "#fff", padding: "3px 10px", borderRadius: 6 }}>Most popular</span>}
+                          {selected && <span style={{ position: "absolute", top: -9, right: 14, ...M, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", background: ACCENT, color: "#fff", padding: "3px 10px", borderRadius: 6 }}>Selected</span>}
+                          <div style={{ textAlign: "left" }}>
+                            <div style={{ ...B, fontSize: 15, color: selected ? INK : INK70, fontWeight: 600 }}>{pack.name}</div>
+                            <div style={{ ...M, fontSize: 10, color: selected ? INK45 : INK25, marginTop: 2 }}>{pack.cr} credits &middot; {pack.sub}</div>
+                          </div>
+                          <div style={{ ...M, fontSize: 18, color: ACCENT, fontWeight: 700 }}>{pack.price}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedPack && (
+                    <button onClick={handleConfirmPurchase} style={{
+                      ...M, fontSize: 13, letterSpacing: "0.04em", padding: "15px 32px", borderRadius: 14,
+                      border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
+                      cursor: "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
+                      width: "100%", marginTop: 16, transition: "all 0.3s ease",
+                      animation: "slideUp 0.3s ease both",
+                    }}>
+                      Get {CREDIT_PACKS[selectedPack]} credits &rarr;
+                    </button>
+                  )}
+                  <p style={{ ...M, fontSize: 9, color: INK22, textAlign: "center", marginTop: 14, letterSpacing: "0.04em" }}>Secure checkout coming soon.</p>
+                </>) : (
+                  <div style={{ animation: "slideUp 0.5s ease both" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", marginBottom: 12 }}>
+                      {Icon.check(14, "#00b894")}
+                      <span style={{ ...M, fontSize: 12, color: "#00b894" }}>{credits} credits added to your account</span>
+                    </div>
+                    <button onClick={handleUnlock} style={{
+                      ...M, fontSize: 14, letterSpacing: "0.04em", padding: "16px 32px", borderRadius: 14,
+                      border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
+                      cursor: "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
+                      width: "100%", transition: "all 0.3s ease",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    }}>
+                      Unlock my full roadmap (1 credit)
+                    </button>
+                    <p style={{ ...M, fontSize: 10, color: INK25, textAlign: "center", marginTop: 10 }}>
+                      {credits - 1} credits will remain for breakdowns, adjustments, and new roadmaps.
+                    </p>
+                  </div>
+                )}
+              </Glass>
+            </Reveal>
+
+            <Reveal delay={0.9}>
+              <div style={{ maxWidth: 480, textAlign: "center", padding: "24px 0 48px" }}>
+                <p style={{ fontFamily: H, fontSize: 14, fontStyle: "italic", color: INK22, marginBottom: 10 }}>"But can't I just use ChatGPT?"</p>
+                <p style={{ ...B, fontSize: 12, color: INK25, lineHeight: 1.65, maxWidth: 380, margin: "0 auto" }}>
+                  ChatGPT gives you a wall of text that disappears when you close the tab. Paso gives you a system that lives on your homescreen and keeps showing up until you finish.
+                </p>
+              </div>
+            </Reveal>
+          </div>
+        )}
+
+        {/* COMMITMENT - motivational moment before roadmap */}
+        {step === "commitment" && roadmap && (
+          <div style={{ animation: "fadeIn 0.8s ease both", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "0 24px" }}>
+            <Reveal>
+              <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(108,92,231,0.08)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 28px" }}>
+                {Icon.check(24, ACCENT)}
+              </div>
+            </Reveal>
+            <Reveal delay={0.2}>
+              <p style={{ ...M, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: ACCENT, opacity: 0.6, marginBottom: 16 }}>Thank you</p>
+            </Reveal>
+            <Reveal delay={0.4}>
+              <h2 style={{ fontFamily: H, fontSize: "clamp(24px, 4vw, 36px)", fontWeight: 400, color: INK, lineHeight: 1.4, maxWidth: 440, marginBottom: 16 }}>
+                This is a commitment to yourself.
+              </h2>
+            </Reveal>
+            <Reveal delay={0.6}>
+              <p style={{ ...B, fontSize: 15, color: INK45, lineHeight: 1.7, maxWidth: 400, marginBottom: 12 }}>
+                You are doing this to become the person you already know you can be. 
+                We are here to support you every step of the way, even when the path changes.
+              </p>
+            </Reveal>
+            <Reveal delay={0.8}>
+              <p style={{ fontFamily: H, fontSize: 16, fontStyle: "italic", color: INK25, maxWidth: 360, marginBottom: 40 }}>
+                Your roadmap. Your pace. Your future.
+              </p>
+            </Reveal>
+            <Reveal delay={1.0}>
+              <button onClick={() => setStep("roadmap")} style={{
+                ...M, fontSize: 14, letterSpacing: "0.06em", padding: "16px 40px", borderRadius: 14,
+                border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
+                cursor: "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
+                transition: "all 0.3s ease",
+              }}>
+                Now go get it &rarr;
+              </button>
+            </Reveal>
+            <Reveal delay={1.2}>
+              <p style={{ ...M, fontSize: 10, color: INK22, marginTop: 20 }}>
+                {credits} credits remaining
+              </p>
+            </Reveal>
+          </div>
+        )}
+
         {step === "roadmap" && roadmap && (
           <>
             {/* Shared view banner */}
@@ -2024,42 +2744,95 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                     ...M, fontSize: 10, letterSpacing: "0.04em", padding: "10px 18px", borderRadius: 12,
                     background: "rgba(255,255,255,0.4)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.5)",
                     color: INK45, display: "flex", alignItems: "center", gap: 8,
-                    opacity: !unlocked && i > 0 ? 0.5 : 1,
+                    
                   }}>
                     <span style={{ opacity: 0.4 }}>{String(i + 1).padStart(2, "0")}</span> {p.title}
-                    {!unlocked && i > 0 && <span style={{ display: "flex" }}>{Icon.lock(10, INK45)}</span>}
+                    
                   </div>
                 ))}
               </div>
 
               {/* Paywall CTA */}
-              {!unlocked && (
-                <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 0.95s both", marginTop: 40 }}>
-                  <Glass style={{ maxWidth: 440, padding: "24px 28px" }}>
-                    <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: ACCENT, opacity: 0.6, marginBottom: 12 }}>
-                      Preview mode
-                    </div>
-                    <p style={{ ...B, fontSize: 15, color: INK70, lineHeight: 1.7, marginBottom: 20 }}>
-                      Your full roadmap is ready — {roadmap.phases.length} phases, {totalMilestones} milestones, scientific references, and side quests. Unlock everything for <strong style={{ color: INK }}>€5</strong>.
-                    </p>
-                    <div style={{ display: "flex", flexDirection: mob ? "column" : "row", gap: 10, alignItems: mob ? "stretch" : "center" }}>
-                      <button onClick={handleUnlock}
-                        style={{ ...M, fontSize: 12, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", background: ACCENT, color: "#fff", fontWeight: 500, cursor: "pointer", boxShadow: "0 4px 20px rgba(108,92,231,0.25)", transition: "all 0.3s ease", textAlign: "center" }}>
-                        Unlock full roadmap — €5
+
+
+              {/* Accountability + Save/Share section */}
+              <div style={{ animation: "slideUp 1s cubic-bezier(0.16,1,0.3,1) 0.95s both", marginTop: 48 }}>
+                <Glass style={{ padding: mob ? "24px 20px" : "28px 32px" }}>
+                  <p style={{ ...B, fontSize: 13, color: INK45, lineHeight: 1.7, marginBottom: 6 }}>
+                    People who write down their goals and have weekly accountability are <strong style={{ color: INK60 }}>42% more likely</strong> to achieve them (Matthews, 2015).
+                    Save your roadmap, turn on nudges, and schedule milestones to your calendar to stay on track.
+                  </p>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+                    {/* Save + homescreen */}
+                    <button onClick={async () => {
+                      await ensureSaved();
+                      setShowInstallTip((v) => !v);
+                    }} style={{
+                      ...M, fontSize: 11, letterSpacing: "0.04em", padding: "10px 18px", borderRadius: 12,
+                      border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
+                      cursor: "pointer", boxShadow: "0 2px 12px rgba(108,92,231,0.2)",
+                      display: "flex", alignItems: "center", gap: 6, transition: "all 0.2s",
+                    }}>
+                      {Icon.bookmark(12, "#fff")} {shareId ? "Add to homescreen" : "Save & add to homescreen"}
+                    </button>
+
+                    {/* Share */}
+                    <button onClick={async () => {
+                      await ensureSaved();
+                      setShowSharePopup(true);
+                    }} style={{
+                      ...M, fontSize: 11, letterSpacing: "0.04em", padding: "10px 18px", borderRadius: 12,
+                      border: "1px solid rgba(108,92,231,0.15)", background: "rgba(255,255,255,0.5)",
+                      color: ACCENT, cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 6, transition: "all 0.2s",
+                    }}>
+                      {Icon.share(12, ACCENT)} Share
+                    </button>
+
+                    {/* Nudges */}
+                    {!nudgeSaved && (
+                      <button onClick={async () => {
+                        await ensureSaved();
+                        setShowNudgeSetup(true);
+                      }} style={{
+                        ...M, fontSize: 11, letterSpacing: "0.04em", padding: "10px 18px", borderRadius: 12,
+                        border: "1px solid rgba(108,92,231,0.15)", background: "rgba(255,255,255,0.5)",
+                        color: ACCENT, cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 6, transition: "all 0.2s",
+                      }}>
+                        {Icon.bell(12, ACCENT)} Weekly nudges
                       </button>
-                      <span style={{ ...M, fontSize: 9, color: INK25 }}>One-time payment</span>
+                    )}
+                    {nudgeSaved && (
+                      <span style={{ ...M, fontSize: 10, color: "#00b894", display: "flex", alignItems: "center", gap: 4, padding: "10px 14px" }}>
+                        {Icon.check(10, "#00b894")} Nudges active
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Install tip inline */}
+                  {showInstallTip && (
+                    <div style={{ marginTop: 14, padding: "14px 16px", borderRadius: 12, background: "rgba(108,92,231,0.03)", border: "1px solid rgba(108,92,231,0.08)" }}>
+                      <div style={{ ...B, fontSize: 12, color: INK45, lineHeight: 1.7 }}>
+                        <strong style={{ color: INK60 }}>iPhone/iPad:</strong> Tap share (&#x25A1;&#x2191;) in Safari &rarr; "Add to Home Screen"<br/>
+                        <strong style={{ color: INK60 }}>Android:</strong> Tap &#x22EE; in Chrome &rarr; "Add to Home Screen"<br/>
+                        <strong style={{ color: INK60 }}>Desktop:</strong> Bookmark this page (&#x2318;/Ctrl + D)
+                      </div>
+                      <p style={{ ...B, fontSize: 11, color: INK25, marginTop: 6 }}>Your progress saves automatically. Come back anytime.</p>
                     </div>
-                    <div style={{ display: "flex", gap: 16, marginTop: 16, flexWrap: "wrap" }}>
-                      {["Checkable milestones", "Scientific references", "Side quests", "Break it down", "Export roadmap"].map((f) => (
-                        <span key={f} style={{ ...M, fontSize: 9, color: INK30, letterSpacing: "0.04em", display: "inline-flex", alignItems: "center", gap: 4 }}>{Icon.check(8, ACCENT)} {f}</span>
-                      ))}
-                    </div>
-                  </Glass>
-                </div>
-              )}
+                  )}
+
+                  {shareId && (
+                    <p style={{ ...M, fontSize: 9, color: INK22, marginTop: 10, display: "flex", alignItems: "center", gap: 4 }}>
+                      {Icon.check(8, "#00b894")} Saved &middot; your progress syncs automatically
+                    </p>
+                  )}
+                </Glass>
+              </div>
 
               {unlocked && (
-                <div style={{ marginTop: 72, display: "flex", alignItems: "center", gap: 10, animation: "fadeIn 1s ease 0.5s both" }}>
+                <div style={{ marginTop: 48, display: "flex", alignItems: "center", gap: 10, animation: "fadeIn 1s ease 1.2s both" }}>
                   <div style={{ width: 1, height: 28, background: "linear-gradient(180deg, rgba(108,92,231,0.25), transparent)" }} />
                   <span style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: INK12 }}>Scroll to begin · {checkedCount}/{totalMilestones} milestones</span>
                 </div>
@@ -2072,35 +2845,16 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
             {roadmap.phases.map((phase, i) => (
               <div key={i} ref={(el) => (phaseRefs.current[i] = el)}>
                 {i > 0 && <div style={{ height: 1, background: "linear-gradient(90deg, transparent, rgba(26,26,46,0.03), transparent)" }} />}
-                {unlocked ? (
-                  <PhaseSection phase={phase} index={i} goal={roadmap.goal}
+                <PhaseSection phase={phase} index={i} goal={roadmap.goal}
                     checkedMilestones={checkedMilestones} onToggleMilestone={toggleMilestone}
                     canBreakdown={canBreakdown} onUseCredit={useBreakdownCredit} onBuyBreakdown={handleBuyBreakdown} />
-                ) : (
-                  <LockedPhase phase={phase} index={i} />
-                )}
               </div>
             ))}
 
-            {/* Paywall reminder if locked */}
-            {!unlocked && (
-              <section style={{ minHeight: "40vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center" }}>
-                <Reveal>
-                  <div style={{ width: 48, height: 1, background: "rgba(108,92,231,0.12)", margin: "0 auto 32px" }} />
-                </Reveal>
-                <Reveal delay={0.12}>
-                  <h2 style={{ fontFamily: H, fontSize: "clamp(24px, 3.5vw, 36px)", fontWeight: 400, color: "rgba(26,26,46,0.5)", marginBottom: 16 }}>
-                    Your roadmap is waiting.
-                  </h2>
-                </Reveal>
-                <Reveal delay={0.24}>
-                  <button onClick={handleUnlock}
-                    style={{ ...M, fontSize: 12, letterSpacing: "0.04em", padding: "14px 32px", borderRadius: 14, border: "none", background: ACCENT, color: "#fff", fontWeight: 500, cursor: "pointer", boxShadow: "0 4px 20px rgba(108,92,231,0.25)" }}>
-                    Unlock for €5 →
-                  </button>
-                </Reveal>
-              </section>
-            )}
+
+
+
+            
 
             {/* ━━━ CLOSING (unlocked) ━━━ */}
             {unlocked && (
@@ -2111,8 +2865,8 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
 
                 {/* Progress summary */}
                 <Reveal delay={0.08}>
-                  <Glass style={{ padding: "18px 28px", marginBottom: 32, display: "inline-flex", alignItems: "center", gap: 16 }}>
-                    <div style={{ display: "flex", gap: 3 }}>
+                  <Glass style={{ padding: mob ? "14px 18px" : "18px 28px", marginBottom: 32, display: "flex", flexDirection: mob ? "column" : "row", alignItems: "center", gap: mob ? 10 : 16 }}>
+                    <div style={{ display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "center" }}>
                       {roadmap.phases.map((p, i) => p.milestones.map((_, j) => (
                         <div key={`${i}-${j}`} style={{
                           width: 8, height: 8, borderRadius: 2,
@@ -2139,7 +2893,7 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                 </Reveal>
 
                 <Reveal delay={0.36}>
-                  <div style={{ display: "flex", flexDirection: mob ? "column" : "row", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: mob ? "1fr 1fr" : "repeat(auto-fit, minmax(120px, auto))", gap: mob ? 8 : 12, justifyContent: "center", justifyItems: "center" }}>
                     <button onClick={handleSave}
                       style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 24px", borderRadius: 14, background: shareStatus === "copied" ? "rgba(85,239,196,0.12)" : shareStatus === "saved" ? "rgba(108,92,231,0.08)" : "rgba(255,255,255,0.4)", backdropFilter: "blur(16px)", border: shareStatus === "copied" ? "1px solid rgba(85,239,196,0.3)" : shareStatus === "saved" ? `1px solid ${ACCENT}30` : "1px solid rgba(255,255,255,0.5)", color: shareStatus === "copied" ? "#00b894" : shareStatus === "saved" ? ACCENT : INK40, cursor: "pointer", transition: "all 0.3s ease", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {shareStatus === "saving" ? "Saving..." : shareStatus === "error" ? "Failed — try again" : shareStatus === "copied" ? "Link copied!" : shareId ? <>{Icon.share(14, ACCENT)} Share</> : <>{Icon.bookmark(14, INK40)} Save</>}
@@ -2154,7 +2908,7 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                     </button>
                     {allComplete ? (
                       <button onClick={() => { handleReset(); }}
-                        style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", background: ACCENT, color: "#fff", fontWeight: 500, cursor: "pointer", boxShadow: "0 4px 20px rgba(108,92,231,0.25)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", background: ACCENT, color: "#fff", fontWeight: 500, cursor: "pointer", boxShadow: "0 4px 20px rgba(108,92,231,0.25)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, gridColumn: mob ? "1 / -1" : "auto" }}>
                         Set your next goal {Icon.arrow(11, "#fff")}
                       </button>
                     ) : (
@@ -2164,7 +2918,7 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                           New goal
                         </button>
                         <button onClick={startDayOne}
-                          style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", background: ACCENT, color: "#fff", fontWeight: 500, cursor: "pointer", boxShadow: "0 4px 20px rgba(108,92,231,0.25)" }}>
+                          style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", background: ACCENT, color: "#fff", fontWeight: 500, cursor: "pointer", boxShadow: "0 4px 20px rgba(108,92,231,0.25)", gridColumn: mob ? "1 / -1" : "auto" }}>
                           Take step one {Icon.arrow(11, "#fff")}
                         </button>
                       </>
@@ -2428,7 +3182,7 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
               <div style={{ padding: "14px 16px", borderRadius: 12, background: "rgba(108,92,231,0.04)", border: "1px solid rgba(108,92,231,0.08)", marginBottom: 20 }}>
                 <div style={{ ...M, fontSize: 11, color: ACCENT, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{Icon.bookmark(12, ACCENT)} Add to homescreen</div>
                 <p style={{ ...B, fontSize: 12, color: INK30, lineHeight: 1.5 }}>
-                  Tap the share button (□↑) in Safari or ⋮ in Chrome → "Add to Home Screen" to come back anytime.
+                  Tap the share button (□↑) in Safari or ⋮ in Chrome → "Add to Home Screen". Your roadmap will open automatically every time — like a native app.
                 </p>
               </div>
             )}
@@ -2446,11 +3200,18 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
               <div style={{ animation: "slideUp 0.3s ease both" }}>
                 <div style={{ ...M, fontSize: 11, color: ACCENT, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>{Icon.bell(14, ACCENT)} Accountability nudges</div>
                 <p style={{ ...B, fontSize: 12, color: INK30, lineHeight: 1.5, marginBottom: 14 }}>
-                  Paso will message you with 2-3 milestones to focus on, a motivational quote, and a link to check them off. Stay on track without thinking about it.
+                  Get a notification with your next milestones and a motivational nudge. We'll keep you on track.
                 </p>
 
+                {/* Name input */}
+                <input
+                  value={userName} onChange={(e) => setUserName(e.target.value)}
+                  placeholder="What should we call you?"
+                  style={{ width: "100%", ...B, fontSize: 14, padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(26,26,46,0.08)", background: "rgba(255,255,255,0.7)", outline: "none", marginBottom: 12, boxSizing: "border-box" }}
+                />
+
                 {/* Frequency picker */}
-                <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                   {[["weekly", "Every Monday"], ["biweekly", "Every 2 weeks"], ["monthly", "Monthly"]].map(([val, label]) => (
                     <button key={val} onClick={() => setNudgeFrequency(val)} style={{
                       ...M, fontSize: 11, padding: "8px 14px", borderRadius: 10, cursor: "pointer", transition: "all 0.2s ease",
@@ -2461,31 +3222,26 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                   ))}
                 </div>
 
-                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                  <input
-                    value={nudgePhone} onChange={(e) => setNudgePhone(e.target.value)}
-                    placeholder="WhatsApp number (+31 6...)"
-                    style={{ flex: 1, ...B, fontSize: 14, padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(26,26,46,0.08)", background: "rgba(255,255,255,0.7)", outline: "none" }}
-                  />
-                  <button onClick={handleNudgeSave} style={{
-                    ...M, fontSize: 11, padding: "12px 20px", borderRadius: 12, border: "none",
-                    background: nudgePhone.trim() ? ACCENT : "rgba(26,26,46,0.06)", color: nudgePhone.trim() ? "#fff" : INK25, cursor: nudgePhone.trim() ? "pointer" : "default",
-                  }}>Save</button>
-                </div>
-
-                {nudgePhone.trim() && (
-                  <button onClick={() => {
-                    const testMsg = `Hey! 👋 This is a test from Paso.\n\nYour goal: ${goal}\n\nThis week, focus on:\n✅ ${roadmap?.phases?.[0]?.milestones?.[0] || "Your first milestone"}\n✅ ${roadmap?.phases?.[0]?.milestones?.[1] || "Your second milestone"}\n\n💬 "The path is made by walking." — Antonio Machado\n\nCheck your progress → ${getShareLink() || window.location.href}`;
-                    window.open(`https://wa.me/${nudgePhone.replace(/[^0-9+]/g, "")}?text=${encodeURIComponent(testMsg)}`, "_blank");
-                  }} style={{
-                    ...M, fontSize: 11, width: "100%", marginTop: 8, padding: "10px 16px", borderRadius: 10, cursor: "pointer",
-                    border: "1px solid rgba(37,211,102,0.2)", background: "rgba(37,211,102,0.06)", color: "#25D366",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                  }}>{Icon.whatsapp(14, "#25D366")} Send test message</button>
-                )}
+                <button onClick={handleNudgeSave} disabled={pushStatus === "requesting" || pushStatus === "ios-safari" || pushStatus === "unsupported"} style={{
+                  ...M, fontSize: 12, width: "100%", padding: "13px 20px", borderRadius: 12, border: "none",
+                  cursor: (pushStatus === "requesting" || pushStatus === "ios-safari" || pushStatus === "unsupported") ? "default" : "pointer",
+                  background: (pushStatus === "denied" || pushStatus === "ios-safari" || pushStatus === "unsupported") ? "rgba(108,92,231,0.08)" : ACCENT,
+                  color: (pushStatus === "denied" || pushStatus === "ios-safari" || pushStatus === "unsupported") ? ACCENT : "#fff",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  opacity: pushStatus === "requesting" ? 0.7 : 1, transition: "all 0.2s ease",
+                }}>{Icon.bell(14, (pushStatus === "denied" || pushStatus === "ios-safari" || pushStatus === "unsupported") ? ACCENT : "#fff")} {
+                  pushStatus === "requesting" ? "Setting up..." :
+                  pushStatus === "denied" ? "Blocked — check browser settings" :
+                  pushStatus === "ios-safari" ? "Add Paso to homescreen first" :
+                  pushStatus === "unsupported" ? "Not supported in this browser" :
+                  pushStatus === "error" ? "Something went wrong — try again" :
+                  "Enable notifications"
+                }</button>
 
                 <p style={{ ...B, fontSize: 10, color: INK22, lineHeight: 1.5, marginTop: 8 }}>
-                  You can unsubscribe anytime by replying STOP. We'll send you a message to confirm it works.
+                  {pushStatus === "ios-safari"
+                    ? "On iPhone, tap the share button (□↑) → \"Add to Home Screen\" first, then open Paso from your homescreen and enable nudges."
+                    : mob ? "Works best when you add Paso to your homescreen." : "You can disable notifications anytime in your browser settings."}
                 </p>
               </div>
             )}
@@ -2497,18 +3253,76 @@ If it IS a valid adjustment to the existing goal, return the FULL updated roadma
                   <span style={{ ...M, fontSize: 12, color: "#00b894" }}>Nudges activated!</span>
                 </div>
                 <p style={{ ...B, fontSize: 11, color: INK30, lineHeight: 1.5, marginBottom: 10 }}>
-                  {nudgeFrequency === "weekly" ? "Every Monday" : nudgeFrequency === "biweekly" ? "Every other Monday" : "First Monday of the month"}, you'll get a message with your next milestones + a motivational quote. Reply STOP anytime to unsubscribe.
+                  {nudgeFrequency === "weekly" ? "Every Monday" : nudgeFrequency === "biweekly" ? "Every other Monday" : "First Monday of the month"}, you'll get a notification with your next milestones + a motivational quote.
                 </p>
-                <button onClick={() => {
-                  const testMsg = `Hey! 👋 This is a test from Paso.\n\nYour goal: ${goal}\n\nThis week, focus on:\n✅ ${roadmap?.phases?.[0]?.milestones?.[0] || "Your first milestone"}\n✅ ${roadmap?.phases?.[0]?.milestones?.[1] || "Your second milestone"}\n\n💬 "The path is made by walking." — Antonio Machado\n\nCheck your progress → ${getShareLink() || window.location.href}`;
-                  window.open(`https://wa.me/${nudgePhone.replace(/[^0-9+]/g, "")}?text=${encodeURIComponent(testMsg)}`, "_blank");
-                }} style={{
+                <button onClick={sendTestPush} style={{
                   ...M, fontSize: 11, width: "100%", padding: "10px 16px", borderRadius: 10, cursor: "pointer",
-                  border: "1px solid rgba(37,211,102,0.2)", background: "rgba(37,211,102,0.06)", color: "#25D366",
+                  border: pushStatus === "test-sent" ? "1px solid rgba(85,239,196,0.3)" : pushStatus === "test-error" ? "1px solid rgba(231,76,60,0.2)" : "1px solid rgba(108,92,231,0.2)",
+                  background: pushStatus === "test-sent" ? "rgba(85,239,196,0.06)" : pushStatus === "test-error" ? "rgba(231,76,60,0.06)" : "rgba(108,92,231,0.06)",
+                  color: pushStatus === "test-sent" ? "#00b894" : pushStatus === "test-error" ? "#e74c3c" : ACCENT,
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                }}>{Icon.whatsapp(14, "#25D366")} Send test message</button>
+                }}>{pushStatus === "requesting" ? "Sending..." : pushStatus === "test-sent" ? "Sent! Check your notifications" : pushStatus === "test-error" ? "Failed — check console for details" : "Send test notification"}</button>
+                <button onClick={handleNudgeDisable} style={{
+                  ...M, fontSize: 11, width: "100%", padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 6,
+                  border: "1px solid rgba(26,26,46,0.06)", background: "transparent", color: INK25,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                }}>Turn off nudges</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ━━━ WELCOME BACK POPUP ━━━ */}
+      {showWelcomeBack && roadmap && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 1200,
+          background: "rgba(26,26,46,0.3)", backdropFilter: "blur(12px)",
+          display: "flex", alignItems: mob ? "flex-end" : "center", justifyContent: "center",
+          padding: mob ? 0 : 40, animation: "fadeIn 0.3s ease both",
+        }} onClick={() => setShowWelcomeBack(false)}>
+          <div style={{
+            background: "rgba(255,255,255,0.94)", backdropFilter: "blur(24px)",
+            borderRadius: mob ? "28px 28px 0 0" : 28, padding: mob ? "32px 24px 40px" : "36px 36px 32px",
+            maxWidth: 440, width: "100%", textAlign: "center",
+            boxShadow: "0 20px 60px rgba(26,26,46,0.12)", animation: "slideUp 0.4s cubic-bezier(0.16,1,0.3,1) both",
+          }} onClick={(e) => e.stopPropagation()}>
+            {/* Greeting */}
+            <div style={{ fontSize: 32, marginBottom: 16 }}>👋</div>
+            <h3 style={{ fontFamily: H, fontSize: 22, fontWeight: 400, color: INK, marginBottom: 8 }}>
+              {userName ? `Welcome back, ${userName}!` : "Welcome back!"}
+            </h3>
+            <p style={{ ...B, fontSize: 13, color: INK30, lineHeight: 1.6, marginBottom: 24 }}>
+              {(() => {
+                const quotes = [
+                  "The path is made by walking. Let's keep going.",
+                  "Small steps every day add up to big results.",
+                  "You showed up. That's already half the battle.",
+                  "Consistency beats intensity. Always.",
+                  "Every milestone checked is proof you can do this.",
+                ];
+                return quotes[Math.floor(Math.random() * quotes.length)];
+              })()}
+            </p>
+
+            {/* Focus milestones */}
+            <div style={{ textAlign: "left", padding: "16px 18px", borderRadius: 14, background: "rgba(108,92,231,0.04)", border: "1px solid rgba(108,92,231,0.08)", marginBottom: 20 }}>
+              <div style={{ ...M, fontSize: 10, letterSpacing: "0.1em", color: ACCENT, marginBottom: 10, textTransform: "uppercase" }}>Focus on next</div>
+              {roadmap.phases && roadmap.phases.flatMap((p, pi) =>
+                p.milestones.map((m, mi) => ({ m, key: `${pi}-${mi}`, done: checkedMilestones[`${pi}-${mi}`] }))
+              ).filter(x => !x.done).slice(0, 2).map((x, i) => (
+                <div key={x.key} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: i === 0 ? 8 : 0 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: 2, background: ACCENT, marginTop: 5, flexShrink: 0 }} />
+                  <span style={{ ...B, fontSize: 13, color: INK60, lineHeight: 1.5 }}>{x.m}</span>
+                </div>
+              ))}
+            </div>
+
+            <button onClick={() => { setShowWelcomeBack(false); }} style={{
+              ...M, fontSize: 12, width: "100%", padding: "14px 24px", borderRadius: 14,
+              border: "none", background: ACCENT, color: "#fff", cursor: "pointer",
+              boxShadow: "0 4px 20px rgba(108,92,231,0.25)",
+            }}>Let's get to it →</button>
           </div>
         </div>
       )}
