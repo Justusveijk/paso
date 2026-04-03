@@ -602,11 +602,11 @@ const ACCENT = "#6C5CE7";
 
 /* ─── BACKGROUND THEMES ─── */
 const BG_THEMES = [
-  { id: "lavender", name: "Lavender", bg: "linear-gradient(135deg, #e8dff5 0%, #f5e6d3 15%, #d4e4f7 35%, #f0d9e8 55%, #dbecd4 75%, #e8dff5 100%)", solid: "#e8dff5" },
-  { id: "sand", name: "Warm Sand", bg: "linear-gradient(135deg, #f5efe6 0%, #ede4d4 25%, #f0e8d8 50%, #e8dcc8 75%, #f5efe6 100%)", solid: "#f5efe6" },
-  { id: "slate", name: "Deep Slate", bg: "linear-gradient(135deg, #2d3436 0%, #353b48 25%, #2f3640 50%, #3d4452 75%, #2d3436 100%)", solid: "#2d3436", dark: true },
-  { id: "sage", name: "Muted Sage", bg: "linear-gradient(135deg, #dfe6da 0%, #e4ded4 20%, #d8e2d0 45%, #e0d8ce 70%, #dfe6da 100%)", solid: "#dfe6da" },
-  { id: "navy", name: "Soft Navy", bg: "linear-gradient(135deg, #2c3e6b 0%, #34496e 25%, #2e4268 50%, #384d72 75%, #2c3e6b 100%)", solid: "#2c3e6b", dark: true },
+  { id: "lavender", name: "Lavender Dream", bg: "linear-gradient(135deg, #ece9f8 0%, #ddd6f3 50%, #e8e4f5 100%)", dark: false },
+  { id: "periwinkle", name: "Periwinkle Dusk", bg: "linear-gradient(135deg, #dce4f5 0%, #c9d5f0 50%, #d8dff5 100%)", dark: false },
+  { id: "sage", name: "Sage Mist", bg: "linear-gradient(135deg, #e4ede9 0%, #d5e5dd 50%, #dde8e3 100%)", dark: false },
+  { id: "slate", name: "Slate Bloom", bg: "linear-gradient(135deg, #2e3350 0%, #3a3d6b 50%, #2b3060 100%)", dark: true },
+  { id: "midnight", name: "Midnight Iris", bg: "linear-gradient(135deg, #1a1b2e 0%, #252342 50%, #1e1d35 100%)", dark: true },
 ];
 const INK = "#1a1a2e";
 const INK70 = "rgba(26,26,46,0.75)";
@@ -1640,7 +1640,12 @@ export default function PasoLive() {
   // Sync body background with theme
   useEffect(() => {
     const theme = BG_THEMES.find(t => t.id === bgTheme);
-    if (theme) document.body.style.background = theme.solid;
+    if (theme) {
+      document.body.style.background = theme.bg;
+      document.body.style.backgroundAttachment = "fixed";
+      document.body.style.transition = "background 0.8s ease";
+      document.body.style.minHeight = "100vh";
+    }
   }, [bgTheme]);
 
   const handleBgThemeChange = (id) => {
@@ -2272,18 +2277,20 @@ export default function PasoLive() {
   };
 
   return (
-    <div style={{
+    <div data-theme={isDarkTheme ? "dark" : "light"} style={{
       minHeight: "100vh",
-      background: BG_THEMES.find(t => t.id === bgTheme)?.bg || BG_THEMES[0].bg,
-      backgroundAttachment: mob ? "scroll" : "fixed", color: isDarkTheme ? "rgba(255,255,255,0.9)" : INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
-      transition: "background 0.8s ease, color 0.5s ease",
+      background: "transparent",
+      color: isDarkTheme ? "#e8e6f0" : INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
+      transition: "color 0.5s ease",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       <style>{`
-        *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{background:#e8dff5}
+        *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{background:linear-gradient(135deg, #ece9f8 0%, #ddd6f3 50%, #e8e4f5 100%)}
         ::selection{background:rgba(108,92,231,0.2);color:#1a1a2e}
         input::placeholder,textarea::placeholder{color:rgba(26,26,46,0.22)}
+        [data-theme="dark"] h1,[data-theme="dark"] h2,[data-theme="dark"] h3,[data-theme="dark"] h4,[data-theme="dark"] h5,[data-theme="dark"] h6{color:#ffffff!important}
+        [data-theme="dark"] [data-card]{background:rgba(255,255,255,0.07)!important;border-color:rgba(255,255,255,0.12)!important}
         input,textarea,select{font-size:16px!important}
         button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
         @keyframes spin{to{transform:rotate(360deg)}}
@@ -2353,8 +2360,8 @@ export default function PasoLive() {
         {/* Header */}
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px 0", animation: "fadeIn 0.8s ease both" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, cursor: "pointer" }} onClick={handleReset}>
-            <span style={{ fontFamily: H, fontSize: 21, fontWeight: 500, color: isDarkTheme ? "rgba(255,255,255,0.9)" : INK, transition: "color 0.5s ease" }}>Paso</span>
-            <span style={{ ...M, fontSize: 8, color: isDarkTheme ? "rgba(255,255,255,0.3)" : INK22, letterSpacing: "0.06em", fontStyle: "italic", transition: "color 0.5s ease" }}>Spanish for step</span>
+            <span style={{ fontFamily: H, fontSize: 21, fontWeight: 500, color: isDarkTheme ? "#ffffff" : INK, transition: "color 0.5s ease" }}>Paso</span>
+            <span style={{ ...M, fontSize: 8, color: isDarkTheme ? "#b8b4d0" : INK22, letterSpacing: "0.06em", fontStyle: "italic", transition: "color 0.5s ease" }}>Spanish for step</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {/* Credits pill */}
@@ -2366,8 +2373,8 @@ export default function PasoLive() {
             {/* Theme picker */}
             <div style={{ position: "relative" }}>
               <button onClick={() => setShowThemePicker(v => !v)} style={{
-                width: 22, height: 22, borderRadius: "50%",
-                background: BG_THEMES.find(t => t.id === bgTheme)?.solid || "#e8dff5",
+                width: 24, height: 24, borderRadius: "50%",
+                background: BG_THEMES.find(t => t.id === bgTheme)?.bg || BG_THEMES[0].bg,
                 border: "2px solid rgba(255,255,255,0.6)",
                 cursor: "pointer",
                 boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
@@ -2388,8 +2395,8 @@ export default function PasoLive() {
                     <button key={t.id} onClick={() => handleBgThemeChange(t.id)}
                       title={t.name}
                       style={{
-                        width: 28, height: 28, borderRadius: "50%",
-                        background: t.solid, padding: 0,
+                        width: 24, height: 24, borderRadius: "50%",
+                        background: t.bg, padding: 0,
                         border: bgTheme === t.id ? `2px solid ${ACCENT}` : "2px solid rgba(0,0,0,0.08)",
                         cursor: "pointer",
                         transform: bgTheme === t.id ? "scale(1.15)" : "scale(1)",
