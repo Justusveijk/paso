@@ -608,17 +608,17 @@ const BG_THEMES = [
   { id: "sage", name: "Muted Sage", bg: "linear-gradient(135deg, #dfe6da 0%, #e4ded4 20%, #d8e2d0 45%, #e0d8ce 70%, #dfe6da 100%)", solid: "#dfe6da" },
   { id: "navy", name: "Soft Navy", bg: "linear-gradient(135deg, #2c3e6b 0%, #34496e 25%, #2e4268 50%, #384d72 75%, #2c3e6b 100%)", solid: "#2c3e6b", dark: true },
 ];
-const INK = "#1a1a2e";
-const INK70 = "rgba(26,26,46,0.75)";
-const INK60 = "rgba(26,26,46,0.65)";
-const INK50 = "rgba(26,26,46,0.6)";
-const INK45 = "rgba(26,26,46,0.55)";
-const INK40 = "rgba(26,26,46,0.5)";
-const INK30 = "rgba(26,26,46,0.42)";
-const INK25 = "rgba(26,26,46,0.35)";
-const INK22 = "rgba(26,26,46,0.3)";
-const INK12 = "rgba(26,26,46,0.14)";
-const INK08 = "rgba(26,26,46,0.1)";
+const INK = "var(--ink)";
+const INK70 = "var(--ink70)";
+const INK60 = "var(--ink60)";
+const INK50 = "var(--ink50)";
+const INK45 = "var(--ink45)";
+const INK40 = "var(--ink40)";
+const INK30 = "var(--ink30)";
+const INK25 = "var(--ink25)";
+const INK22 = "var(--ink22)";
+const INK12 = "var(--ink12)";
+const INK08 = "var(--ink08)";
 
 /* ─── API — prompts are server-side in /api/generate ─── */
 async function callAPI(action, data, _retry = true) {
@@ -738,7 +738,7 @@ function BreakdownView({ data, mode, onClose }) {
           <button onClick={onClose} style={{ ...M, fontSize: 10, color: INK25, background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>{Icon.close(10, INK25)} Close</button>
         </div>
         {mode === "mini" && data.steps && data.steps.map((step, i) => (
-          <div key={i} style={{ marginBottom: 20, paddingBottom: 20, borderBottom: i < data.steps.length - 1 ? "1px solid rgba(26,26,46,0.05)" : "none" }}>
+          <div key={i} style={{ marginBottom: 20, paddingBottom: 20, borderBottom: i < data.steps.length - 1 ? "1px solid var(--ink-divider)" : "none" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <span style={{ ...M, fontSize: 11, color: ACCENT }}>{String(i + 1).padStart(2, "0")}</span>
               <span style={{ ...B, fontSize: 14, fontWeight: 600, color: INK60 }}>{step.title}</span>
@@ -1035,7 +1035,7 @@ function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone
                           }}>{Icon.calendar(12, "#fff")} Add to calendar</button>
                           <button onClick={() => setSchedulingIdx(null)} style={{
                             ...M, fontSize: 11, padding: "8px 12px",
-                            borderRadius: 8, border: "1px solid rgba(26,26,46,0.08)",
+                            borderRadius: 8, border: "1px solid var(--ink-border)",
                             background: "transparent", color: INK30, cursor: "pointer",
                           }}>Cancel</button>
                         </div>
@@ -1282,8 +1282,8 @@ function SocialTicker() {
   return (
     <div style={{ overflow: "hidden", whiteSpace: "nowrap", maskImage: "linear-gradient(90deg, transparent, black 8%, black 92%, transparent)" }}>
       <div style={{ display: "inline-block", animation: "tickerScroll 180s linear infinite" }}>
-        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "rgba(26,26,46,0.35)", letterSpacing: "0.01em" }}>{TICKER_TEXT}</span>
-        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "rgba(26,26,46,0.35)", letterSpacing: "0.01em" }}>{TICKER_TEXT}</span>
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "var(--ink25)", letterSpacing: "0.01em" }}>{TICKER_TEXT}</span>
+        <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "var(--ink25)", letterSpacing: "0.01em" }}>{TICKER_TEXT}</span>
       </div>
     </div>
   );
@@ -1490,7 +1490,7 @@ function IntroStone({ mob, onPress }) {
       // Text
       ctx.globalAlpha = Math.min(st.fadeAlpha, 0.2);
       ctx.font = "600 11px 'DM Sans', sans-serif"; ctx.textAlign = "center"; ctx.letterSpacing = "3px";
-      ctx.fillStyle = "#1a1a2e"; ctx.fillText("P A S O", cx, stoneCY + S + 36);
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim() || "#1a1a2e"; ctx.fillText("P A S O", cx, stoneCY + S + 36);
       ctx.globalAlpha = Math.min(st.fadeAlpha, 0.15);
       ctx.font = "italic 12px 'DM Sans', sans-serif";
       ctx.fillText(mob ? "Tap to take your first step" : "Click to take your first step", cx, stoneCY + S + 56);
@@ -1640,7 +1640,7 @@ export default function PasoLive() {
   // Sync body background with theme
   useEffect(() => {
     const theme = BG_THEMES.find(t => t.id === bgTheme);
-    if (theme) document.body.style.background = theme.solid;
+    if (theme) document.body.style.backgroundColor = theme.solid;
   }, [bgTheme]);
 
   const handleBgThemeChange = (id) => {
@@ -1650,6 +1650,44 @@ export default function PasoLive() {
   };
 
   const isDarkTheme = BG_THEMES.find(t => t.id === bgTheme)?.dark || false;
+
+  // Sync CSS custom properties with theme
+  useEffect(() => {
+    const root = document.documentElement;
+    if (isDarkTheme) {
+      root.style.setProperty('--ink', 'rgba(255,255,255,0.9)');
+      root.style.setProperty('--ink70', 'rgba(255,255,255,0.7)');
+      root.style.setProperty('--ink60', 'rgba(255,255,255,0.65)');
+      root.style.setProperty('--ink50', 'rgba(255,255,255,0.6)');
+      root.style.setProperty('--ink45', 'rgba(255,255,255,0.55)');
+      root.style.setProperty('--ink40', 'rgba(255,255,255,0.5)');
+      root.style.setProperty('--ink30', 'rgba(255,255,255,0.42)');
+      root.style.setProperty('--ink25', 'rgba(255,255,255,0.35)');
+      root.style.setProperty('--ink22', 'rgba(255,255,255,0.3)');
+      root.style.setProperty('--ink12', 'rgba(255,255,255,0.14)');
+      root.style.setProperty('--ink08', 'rgba(255,255,255,0.1)');
+      root.style.setProperty('--ink-border', 'rgba(255,255,255,0.12)');
+      root.style.setProperty('--ink-divider', 'rgba(255,255,255,0.08)');
+      root.style.setProperty('--ink-bg-subtle', 'rgba(255,255,255,0.08)');
+      root.style.setProperty('--ink-disabled', 'rgba(255,255,255,0.25)');
+    } else {
+      root.style.setProperty('--ink', '#1a1a2e');
+      root.style.setProperty('--ink70', 'rgba(26,26,46,0.75)');
+      root.style.setProperty('--ink60', 'rgba(26,26,46,0.65)');
+      root.style.setProperty('--ink50', 'rgba(26,26,46,0.6)');
+      root.style.setProperty('--ink45', 'rgba(26,26,46,0.55)');
+      root.style.setProperty('--ink40', 'rgba(26,26,46,0.5)');
+      root.style.setProperty('--ink30', 'rgba(26,26,46,0.42)');
+      root.style.setProperty('--ink25', 'rgba(26,26,46,0.35)');
+      root.style.setProperty('--ink22', 'rgba(26,26,46,0.3)');
+      root.style.setProperty('--ink12', 'rgba(26,26,46,0.14)');
+      root.style.setProperty('--ink08', 'rgba(26,26,46,0.1)');
+      root.style.setProperty('--ink-border', 'rgba(26,26,46,0.08)');
+      root.style.setProperty('--ink-divider', 'rgba(26,26,46,0.05)');
+      root.style.setProperty('--ink-bg-subtle', 'rgba(26,26,46,0.06)');
+      root.style.setProperty('--ink-disabled', 'rgba(26,26,46,0.2)');
+    }
+  }, [isDarkTheme]);
 
   // Offline detection
   useEffect(() => {
@@ -2275,15 +2313,15 @@ export default function PasoLive() {
     <div style={{
       minHeight: "100vh",
       background: BG_THEMES.find(t => t.id === bgTheme)?.bg || BG_THEMES[0].bg,
-      backgroundAttachment: mob ? "scroll" : "fixed", color: isDarkTheme ? "rgba(255,255,255,0.9)" : INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
+      backgroundAttachment: mob ? "scroll" : "fixed", color: INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
       transition: "background 0.8s ease, color 0.5s ease",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       <style>{`
-        *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{background:#e8dff5}
-        ::selection{background:rgba(108,92,231,0.2);color:#1a1a2e}
-        input::placeholder,textarea::placeholder{color:rgba(26,26,46,0.22)}
+        *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}
+        ::selection{background:rgba(108,92,231,0.2);color:var(--ink)}
+        input::placeholder,textarea::placeholder{color:var(--ink22)}
         input,textarea,select{font-size:16px!important}
         button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
         @keyframes spin{to{transform:rotate(360deg)}}
@@ -2331,7 +2369,7 @@ export default function PasoLive() {
           <div style={{
             ...B, fontSize: 12, color: INK45, padding: "8px 18px", borderRadius: 20,
             background: "rgba(255,255,255,0.85)", backdropFilter: "blur(16px)",
-            border: "1px solid rgba(26,26,46,0.08)",
+            border: "1px solid var(--ink-border)",
             boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
           }}>
             You're offline — your roadmap is still here, but some features need a connection
@@ -2344,7 +2382,7 @@ export default function PasoLive() {
         <nav style={{ position: "fixed", right: 28, top: "50%", transform: "translateY(-50%)", zIndex: 50, display: "flex", flexDirection: "column", gap: 12, animation: "fadeIn 1s ease 1s both" }}>
           {roadmap.phases.map((_, i) => (
             <button key={i} onClick={() => phaseRefs.current[i]?.scrollIntoView({ behavior: "smooth", block: "center" })}
-              style={{ width: activePhase === i ? 24 : 14, height: 3, borderRadius: 2, border: "none", cursor: "pointer", padding: 0, background: activePhase === i ? ACCENT : "rgba(26,26,46,0.08)", transition: "all 0.5s cubic-bezier(0.16,1,0.3,1)" }} />
+              style={{ width: activePhase === i ? 24 : 14, height: 3, borderRadius: 2, border: "none", cursor: "pointer", padding: 0, background: activePhase === i ? ACCENT : "var(--ink-border)", transition: "all 0.5s cubic-bezier(0.16,1,0.3,1)" }} />
           ))}
         </nav>
       )}
@@ -2353,8 +2391,8 @@ export default function PasoLive() {
         {/* Header */}
         <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px 0", animation: "fadeIn 0.8s ease both" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, cursor: "pointer" }} onClick={handleReset}>
-            <span style={{ fontFamily: H, fontSize: 21, fontWeight: 500, color: isDarkTheme ? "rgba(255,255,255,0.9)" : INK, transition: "color 0.5s ease" }}>Paso</span>
-            <span style={{ ...M, fontSize: 8, color: isDarkTheme ? "rgba(255,255,255,0.3)" : INK22, letterSpacing: "0.06em", fontStyle: "italic", transition: "color 0.5s ease" }}>Spanish for step</span>
+            <span style={{ fontFamily: H, fontSize: 21, fontWeight: 500, color: INK, transition: "color 0.5s ease" }}>Paso</span>
+            <span style={{ ...M, fontSize: 8, color: INK22, letterSpacing: "0.06em", fontStyle: "italic", transition: "color 0.5s ease" }}>Spanish for step</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {/* Credits pill */}
@@ -2428,7 +2466,7 @@ export default function PasoLive() {
             )}
           </div>
         </header>
-        <div style={{ height: 1, background: "rgba(26,26,46,0.05)" }} />
+        <div style={{ height: 1, background: "var(--ink-divider)" }} />
 
         {/* ━━━ INTRO — STEPPING STONE ━━━ */}
         {step === "intro" && <IntroStone mob={mob} onPress={() => {
@@ -2468,7 +2506,7 @@ export default function PasoLive() {
                   onChange={(e) => setInputValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleGoal()}
                   style={{ flex: 1, background: "none", border: "none", outline: "none", fontFamily: "'DM Sans',sans-serif", fontSize: 16, color: INK, padding: mob ? "8px 0" : 0 }} />
                 <button onClick={handleGoal} disabled={!inputValue.trim()}
-                  style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: mob ? "13px 22px" : "11px 22px", borderRadius: 12, border: "none", cursor: inputValue.trim() ? "pointer" : "default", background: inputValue.trim() ? ACCENT : "rgba(26,26,46,0.06)", color: inputValue.trim() ? "#fff" : "rgba(26,26,46,0.2)", fontWeight: 500, transition: "all 0.3s ease", whiteSpace: "nowrap" }}>
+                  style={{ ...M, fontSize: 11, letterSpacing: "0.04em", padding: mob ? "13px 22px" : "11px 22px", borderRadius: 12, border: "none", cursor: inputValue.trim() ? "pointer" : "default", background: inputValue.trim() ? ACCENT : "var(--ink-bg-subtle)", color: inputValue.trim() ? "#fff" : "var(--ink-disabled)", fontWeight: 500, transition: "all 0.3s ease", whiteSpace: "nowrap" }}>
                   Take the first step
                 </button>
               </Glass>
@@ -2526,7 +2564,7 @@ export default function PasoLive() {
                         </div>
                       ))}
                     </div>
-                    <div style={{ borderTop: "1px solid rgba(26,26,46,0.05)", paddingTop: 12 }}>
+                    <div style={{ borderTop: "1px solid var(--ink-divider)", paddingTop: 12 }}>
                       {ex.phase1.milestones.slice(0, 2).map((m, i) => (
                         <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 4 }}>
                           <div style={{ width: 12, height: 12, borderRadius: 4, border: "1.5px solid rgba(108,92,231,0.25)", flexShrink: 0, marginTop: 2 }} />
@@ -2586,7 +2624,7 @@ export default function PasoLive() {
                 {[1, 2, 3].map(i => (
                   <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10, padding: "10px 14px", borderRadius: 12, background: "rgba(255,255,255,0.3)", backdropFilter: "blur(12px)" }}>
                     <div style={{ width: 28, height: 12, borderRadius: 4, background: "linear-gradient(90deg, rgba(108,92,231,0.06), rgba(108,92,231,0.12), rgba(108,92,231,0.06))", backgroundSize: "200% 100%", animation: "skeletonShimmer 1.5s ease infinite" }} />
-                    <div style={{ flex: 1, height: 10, borderRadius: 4, background: "linear-gradient(90deg, rgba(26,26,46,0.04), rgba(26,26,46,0.08), rgba(26,26,46,0.04))", backgroundSize: "200% 100%", animation: `skeletonShimmer 1.5s ease ${i * 0.2}s infinite` }} />
+                    <div style={{ flex: 1, height: 10, borderRadius: 4, background: "linear-gradient(90deg, var(--ink-divider), var(--ink-border), var(--ink-divider))", backgroundSize: "200% 100%", animation: `skeletonShimmer 1.5s ease ${i * 0.2}s infinite` }} />
                   </div>
                 ))}
               </div>
@@ -2624,12 +2662,12 @@ export default function PasoLive() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexDirection: mob ? "column" : "row", gap: mob ? 16 : 0 }}>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {questions.map((q, i) => (
-                  <div key={i} style={{ width: answers[q.id] ? 24 : 16, height: 3, borderRadius: 2, background: answers[q.id] ? ACCENT : "rgba(26,26,46,0.08)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)" }} />
+                  <div key={i} style={{ width: answers[q.id] ? 24 : 16, height: 3, borderRadius: 2, background: answers[q.id] ? ACCENT : "var(--ink-border)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)" }} />
                 ))}
                 <span style={{ ...M, fontSize: 10, color: INK25, marginLeft: 8 }}>{Object.keys(answers).length}/{questions.length}</span>
               </div>
               <button onClick={handleGenerate} disabled={!allAnswered}
-                style={{ ...M, fontSize: 12, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", cursor: allAnswered ? "pointer" : "default", background: allAnswered ? ACCENT : "rgba(26,26,46,0.06)", color: allAnswered ? "#fff" : "rgba(26,26,46,0.2)", fontWeight: 500, transition: "all 0.4s ease", boxShadow: allAnswered ? "0 4px 20px rgba(108,92,231,0.25)" : "none", width: mob ? "100%" : "auto" }}>
+                style={{ ...M, fontSize: 12, letterSpacing: "0.04em", padding: "13px 28px", borderRadius: 14, border: "none", cursor: allAnswered ? "pointer" : "default", background: allAnswered ? ACCENT : "var(--ink-bg-subtle)", color: allAnswered ? "#fff" : "var(--ink-disabled)", fontWeight: 500, transition: "all 0.4s ease", boxShadow: allAnswered ? "0 4px 20px rgba(108,92,231,0.25)" : "none", width: mob ? "100%" : "auto" }}>
                 Generate my roadmap →
               </button>
             </div>
@@ -2693,7 +2731,7 @@ export default function PasoLive() {
                         <button key={pack.id} onClick={() => handleSelectPack(pack.id)} style={{
                           display: "flex", alignItems: "center", justifyContent: "space-between",
                           padding: "14px 20px", borderRadius: 14, cursor: "pointer",
-                          border: selected ? `2px solid ${ACCENT}` : "1px solid rgba(26,26,46,0.08)",
+                          border: selected ? `2px solid ${ACCENT}` : "1px solid var(--ink-border)",
                           background: selected ? "rgba(108,92,231,0.06)" : "rgba(255,255,255,0.6)",
                           transition: "all 0.25s ease", position: "relative",
                           transform: selected ? "scale(1.02)" : "scale(1)",
@@ -2955,12 +2993,12 @@ export default function PasoLive() {
               )}
             </section>
 
-            <div style={{ height: 1, background: "linear-gradient(90deg, transparent, rgba(26,26,46,0.04), transparent)" }} />
+            <div style={{ height: 1, background: "linear-gradient(90deg, transparent, var(--ink-divider), transparent)" }} />
 
             {/* Phases */}
             {roadmap.phases.map((phase, i) => (
               <div key={i} ref={(el) => (phaseRefs.current[i] = el)}>
-                {i > 0 && <div style={{ height: 1, background: "linear-gradient(90deg, transparent, rgba(26,26,46,0.03), transparent)" }} />}
+                {i > 0 && <div style={{ height: 1, background: "linear-gradient(90deg, transparent, var(--ink-divider), transparent)" }} />}
                 <PhaseSection phase={phase} index={i} goal={roadmap.goal}
                     checkedMilestones={checkedMilestones} onToggleMilestone={toggleMilestone}
                     canBreakdown={canBreakdown} onUseCredit={useBreakdownCredit} onBuyBreakdown={handleBuyBreakdown} />
@@ -2986,7 +3024,7 @@ export default function PasoLive() {
                       {roadmap.phases.map((p, i) => p.milestones.map((_, j) => (
                         <div key={`${i}-${j}`} style={{
                           width: 8, height: 8, borderRadius: 2,
-                          background: checkedMilestones[`${i}-${j}`] ? ACCENT : "rgba(26,26,46,0.06)",
+                          background: checkedMilestones[`${i}-${j}`] ? ACCENT : "var(--ink-bg-subtle)",
                           transition: "all 0.3s ease",
                         }} />
                       )))}
@@ -2996,12 +3034,12 @@ export default function PasoLive() {
                 </Reveal>
 
                 <Reveal delay={0.16}>
-                  <h2 style={{ fontFamily: H, fontSize: "clamp(26px, 3.5vw, 38px)", fontWeight: 400, letterSpacing: "-0.025em", color: "rgba(26,26,46,0.5)", marginBottom: 12 }}>
+                  <h2 style={{ fontFamily: H, fontSize: "clamp(26px, 3.5vw, 38px)", fontWeight: 400, letterSpacing: "-0.025em", color: "var(--ink40)", marginBottom: 12 }}>
                     {allComplete ? "Every step, taken." : "Step by step. Starting now."}
                   </h2>
                 </Reveal>
                 <Reveal delay={0.24}>
-                  <p style={{ fontFamily: H, fontSize: 16, fontStyle: "italic", color: "rgba(26,26,46,0.2)", marginBottom: 36, maxWidth: 380, lineHeight: 1.6 }}>
+                  <p style={{ fontFamily: H, fontSize: 16, fontStyle: "italic", color: "var(--ink-disabled)", marginBottom: 36, maxWidth: 380, lineHeight: 1.6 }}>
                     {allComplete
                       ? "You did the thing. Every phase, every milestone. Whatever comes next, you've proven you can build toward it."
                       : "Your roadmap lives here. Check off milestones as you go — each one is a step closer to the person you're becoming."}
@@ -3171,7 +3209,7 @@ export default function PasoLive() {
               {previewExample.phases.map((p, i) => (
                 <div key={i} style={{
                   ...M, fontSize: 9, letterSpacing: "0.04em", padding: "5px 12px", borderRadius: 8,
-                  background: i === 0 ? ACCENT : "rgba(26,26,46,0.04)",
+                  background: i === 0 ? ACCENT : "var(--ink-divider)",
                   color: i === 0 ? "#fff" : INK25,
                 }}>
                   {String(i + 1).padStart(2, "0")} {p}
@@ -3225,7 +3263,7 @@ export default function PasoLive() {
             </div>
 
             {/* Locked phases teaser */}
-            <div style={{ textAlign: "center", padding: "20px 0 8px", borderTop: "1px solid rgba(26,26,46,0.05)" }}>
+            <div style={{ textAlign: "center", padding: "20px 0 8px", borderTop: "1px solid var(--ink-divider)" }}>
               <p style={{ ...B, fontSize: 13, color: INK25, marginBottom: 4 }}>Phases 2–4 are generated when you personalize</p>
               <p style={{ ...B, fontSize: 11, color: INK22 }}>Your answers shape the entire roadmap — no two are alike</p>
             </div>
@@ -3281,12 +3319,12 @@ export default function PasoLive() {
               }}>{Icon.whatsapp(18, "#fff")} Share on WhatsApp</button>
 
               <button onClick={shareText} style={{
-                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "1px solid rgba(26,26,46,0.08)", cursor: "pointer",
+                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "1px solid var(--ink-border)", cursor: "pointer",
                 background: "rgba(255,255,255,0.6)", color: INK60, display: "flex", alignItems: "center", gap: 10, transition: "all 0.2s ease",
               }}>{Icon.message(16, INK40)} Share via text</button>
 
               <button onClick={copyLink} style={{
-                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "1px solid rgba(26,26,46,0.08)", cursor: "pointer",
+                ...M, fontSize: 13, padding: "14px 20px", borderRadius: 14, border: "1px solid var(--ink-border)", cursor: "pointer",
                 background: shareStatus === "copied" ? "rgba(85,239,196,0.1)" : "rgba(255,255,255,0.6)",
                 color: shareStatus === "copied" ? "#00b894" : INK60,
                 display: "flex", alignItems: "center", gap: 10, transition: "all 0.2s ease",
@@ -3323,7 +3361,7 @@ export default function PasoLive() {
                 <input
                   value={userName} onChange={(e) => setUserName(e.target.value)}
                   placeholder="What should we call you?"
-                  style={{ width: "100%", ...B, fontSize: 14, padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(26,26,46,0.08)", background: "rgba(255,255,255,0.7)", outline: "none", marginBottom: 12, boxSizing: "border-box" }}
+                  style={{ width: "100%", ...B, fontSize: 14, padding: "12px 16px", borderRadius: 12, border: "1px solid var(--ink-border)", background: "rgba(255,255,255,0.7)", outline: "none", marginBottom: 12, boxSizing: "border-box" }}
                 />
 
                 {/* Frequency picker */}
@@ -3331,7 +3369,7 @@ export default function PasoLive() {
                   {[["weekly", "Every Monday"], ["biweekly", "Every 2 weeks"], ["monthly", "Monthly"]].map(([val, label]) => (
                     <button key={val} onClick={() => setNudgeFrequency(val)} style={{
                       ...M, fontSize: 11, padding: "8px 14px", borderRadius: 10, cursor: "pointer", transition: "all 0.2s ease",
-                      border: nudgeFrequency === val ? `1.5px solid ${ACCENT}` : "1px solid rgba(26,26,46,0.06)",
+                      border: nudgeFrequency === val ? `1.5px solid ${ACCENT}` : "1px solid var(--ink-bg-subtle)",
                       background: nudgeFrequency === val ? `${ACCENT}10` : "rgba(255,255,255,0.5)",
                       color: nudgeFrequency === val ? ACCENT : INK30,
                     }}>{label}</button>
@@ -3380,7 +3418,7 @@ export default function PasoLive() {
                 }}>{pushStatus === "requesting" ? "Sending..." : pushStatus === "test-sent" ? "Sent! Check your notifications" : pushStatus === "test-error" ? "Failed — check console for details" : "Send test notification"}</button>
                 <button onClick={handleNudgeDisable} style={{
                   ...M, fontSize: 11, width: "100%", padding: "10px 16px", borderRadius: 10, cursor: "pointer", marginTop: 6,
-                  border: "1px solid rgba(26,26,46,0.06)", background: "transparent", color: INK25,
+                  border: "1px solid var(--ink-bg-subtle)", background: "transparent", color: INK25,
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                 }}>Turn off nudges</button>
               </div>
@@ -3479,7 +3517,7 @@ export default function PasoLive() {
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {["I got injured", "Timeline changed", "Got a mentor", "Budget shifted", "New opportunity"].map((s) => (
                   <button key={s} onClick={() => setAdjustInput(s + " — ")}
-                    style={{ ...M, fontSize: 10, padding: "6px 12px", borderRadius: 20, border: "1px solid rgba(26,26,46,0.06)", background: "rgba(255,255,255,0.5)", color: INK30, cursor: "pointer" }}>
+                    style={{ ...M, fontSize: 10, padding: "6px 12px", borderRadius: 20, border: "1px solid var(--ink-bg-subtle)", background: "rgba(255,255,255,0.5)", color: INK30, cursor: "pointer" }}>
                     {s}
                   </button>
                 ))}
@@ -3488,7 +3526,7 @@ export default function PasoLive() {
                 value={adjustInput} onChange={(e) => setAdjustInput(e.target.value)}
                 placeholder="E.g. I got injured and can't run for 3 weeks, or I found a co-founder who handles marketing..."
                 rows={3}
-                style={{ ...B, fontSize: 14, padding: "14px 16px", borderRadius: 14, border: `1px solid ${adjustInput.trim() ? ACCENT + "30" : "rgba(26,26,46,0.08)"}`, background: "rgba(255,255,255,0.7)", outline: "none", resize: "none", transition: "border 0.3s ease", lineHeight: 1.5 }}
+                style={{ ...B, fontSize: 14, padding: "14px 16px", borderRadius: 14, border: `1px solid ${adjustInput.trim() ? ACCENT + "30" : "var(--ink-border)"}`, background: "rgba(255,255,255,0.7)", outline: "none", resize: "none", transition: "border 0.3s ease", lineHeight: 1.5 }}
               />
             </div>
 
@@ -3496,7 +3534,7 @@ export default function PasoLive() {
               style={{
                 ...M, fontSize: 12, letterSpacing: "0.04em", width: "100%", padding: "14px 24px",
                 borderRadius: 14, border: "none", cursor: adjustInput.trim() && !adjusting ? "pointer" : "default",
-                background: adjustInput.trim() && !adjusting ? ACCENT : "rgba(26,26,46,0.06)",
+                background: adjustInput.trim() && !adjusting ? ACCENT : "var(--ink-bg-subtle)",
                 color: adjustInput.trim() && !adjusting ? "#fff" : INK25,
                 transition: "all 0.3s ease",
                 boxShadow: adjustInput.trim() && !adjusting ? "0 4px 20px rgba(108,92,231,0.25)" : "none",

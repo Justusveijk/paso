@@ -1,7 +1,24 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
-body { background: #e8dff5; transition: background-color 0.8s ease; }
-::selection { background: rgba(108,92,231,0.2); color: #1a1a2e; }
-input::placeholder, textarea::placeholder { color: rgba(26,26,46,0.22); }
+:root {
+  --ink: #1a1a2e;
+  --ink70: rgba(26,26,46,0.75);
+  --ink60: rgba(26,26,46,0.65);
+  --ink50: rgba(26,26,46,0.6);
+  --ink45: rgba(26,26,46,0.55);
+  --ink40: rgba(26,26,46,0.5);
+  --ink30: rgba(26,26,46,0.42);
+  --ink25: rgba(26,26,46,0.35);
+  --ink22: rgba(26,26,46,0.3);
+  --ink12: rgba(26,26,46,0.14);
+  --ink08: rgba(26,26,46,0.1);
+  --ink-border: rgba(26,26,46,0.08);
+  --ink-divider: rgba(26,26,46,0.05);
+  --ink-bg-subtle: rgba(26,26,46,0.06);
+  --ink-disabled: rgba(26,26,46,0.2);
+}
+body { background: #e8dff5; transition: background-color 0.8s ease, color 0.5s ease; color: var(--ink); }
+::selection { background: rgba(108,92,231,0.2); color: var(--ink); }
+input::placeholder, textarea::placeholder { color: var(--ink22); }
 input, textarea, select { font-size: 16px !important; }
 button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
