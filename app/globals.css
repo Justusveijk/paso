@@ -19,7 +19,7 @@ html { scroll-behavior: smooth; }
   --accent: #6C5CE7;
 }
 body {
-  background: #e8e4f5;
+  background: #ece9f8;
   transition: background 0.8s ease, color 0.5s ease;
   color: var(--ink);
 }

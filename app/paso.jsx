@@ -605,7 +605,7 @@ const ACCENT = "#6C5CE7";
 
 /* ─── BACKGROUND THEMES ─── */
 const BG_THEMES = [
-  { id: "aurora", name: "Aurora", bg: "linear-gradient(135deg, #e8e4f5, #d4d8f5, #c9d5f0, #dde8f5, #e8e4f5)", solid: "#e8e4f5", animated: true },
+  { id: "aurora", name: "Aurora", bg: "linear-gradient(135deg, #ece9f8, #dce4f5, #d5e5dd, #fde8f0, #fef3e2, #e8f4fd, #f0f4e8, #ece9f8)", solid: "#ece9f8", animated: true },
   { id: "periwinkle", name: "Periwinkle", bg: "linear-gradient(135deg, #dce4f5 0%, #c9d5f0 100%)", solid: "#dce4f5" },
   { id: "sage", name: "Sage", bg: "linear-gradient(135deg, #d5e5dd 0%, #c4d9cf 100%)", solid: "#d5e5dd" },
   { id: "slate", name: "Slate", bg: "linear-gradient(135deg, #2e3350 0%, #3a3d6b 100%)", solid: "#2e3350", dark: true },
@@ -2381,7 +2381,7 @@ export default function PasoLive() {
       <div style={{
         position: "fixed", inset: 0, zIndex: -2, pointerEvents: "none",
         background: curTheme.bg,
-        ...(curTheme.animated ? { backgroundSize: "400% 400%", animation: "gradientShift 28s ease infinite" } : {}),
+        ...(curTheme.animated ? { backgroundSize: "600% 600%", animation: "gradientShift 40s ease infinite" } : {}),
       }} />
 
       {/* Theme paint-drop reveal */}
@@ -2394,7 +2394,7 @@ export default function PasoLive() {
           marginLeft: -(Math.max(window.innerWidth, window.innerHeight) * 1.5),
           marginTop: -(Math.max(window.innerWidth, window.innerHeight) * 1.5),
           background: themeReveal.bg,
-          ...(themeReveal.animated ? { backgroundSize: "400% 400%", animation: "gradientShift 28s ease infinite" } : {}),
+          ...(themeReveal.animated ? { backgroundSize: "600% 600%", animation: "gradientShift 40s ease infinite" } : {}),
           borderRadius: "60% 40% 70% 30% / 50% 60% 40% 50%",
           transform: "scale(0)",
           animation: "paintDrop 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards",
@@ -2814,7 +2814,7 @@ export default function PasoLive() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 80, background: isDarkTheme ? "linear-gradient(transparent, #2e3350)" : "linear-gradient(transparent, #e8e4f5)" }} />
+                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 80, background: isDarkTheme ? "linear-gradient(transparent, #2e3350)" : "linear-gradient(transparent, #ece9f8)" }} />
                 </div>
                 <button
                   onClick={() => {
