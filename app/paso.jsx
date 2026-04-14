@@ -1653,20 +1653,11 @@ export default function PasoLive() {
     document.body.style.background = theme.solid;
   }, [bgTheme]);
 
-  const [themeReveal, setThemeReveal] = useState(null);
-
-  const handleBgThemeChange = (id, e) => {
+  const handleBgThemeChange = (id) => {
     const theme = BG_THEMES.find(t => t.id === id);
     if (!theme) return;
-    const rect = e?.currentTarget?.getBoundingClientRect();
-    const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
-    const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
-    setThemeReveal({ x, y, bg: theme.animated ? theme.bg : theme.solid, animated: theme.animated });
-    setTimeout(() => {
-      setBgTheme(id);
-      try { localStorage.setItem("paso-bg-theme", id); } catch {}
-      setTimeout(() => setThemeReveal(null), 50);
-    }, 700);
+    setBgTheme(id);
+    try { localStorage.setItem("paso-bg-theme", id); } catch {}
     setShowThemePicker(false);
   };
 
@@ -2381,25 +2372,9 @@ export default function PasoLive() {
       <div style={{
         position: "fixed", inset: 0, zIndex: -2, pointerEvents: "none",
         background: curTheme.bg,
+        transition: curTheme.animated ? "none" : "background 2.5s ease",
         ...(curTheme.animated ? { backgroundSize: "600% 600%", animation: "gradientShift 40s ease infinite" } : {}),
       }} />
-
-      {/* Theme paint-drop reveal */}
-      {themeReveal && (
-        <div style={{
-          position: "fixed", zIndex: -1, pointerEvents: "none",
-          left: themeReveal.x, top: themeReveal.y,
-          width: Math.max(window.innerWidth, window.innerHeight) * 3,
-          height: Math.max(window.innerWidth, window.innerHeight) * 3,
-          marginLeft: -(Math.max(window.innerWidth, window.innerHeight) * 1.5),
-          marginTop: -(Math.max(window.innerWidth, window.innerHeight) * 1.5),
-          background: themeReveal.bg,
-          ...(themeReveal.animated ? { backgroundSize: "600% 600%", animation: "gradientShift 40s ease infinite" } : {}),
-          borderRadius: "60% 40% 70% 30% / 50% 60% 40% 50%",
-          transform: "scale(0)",
-          animation: "paintDrop 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards",
-        }} />
-      )}
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       <style>{`
@@ -2428,7 +2403,6 @@ export default function PasoLive() {
         @keyframes successPulse{0%{box-shadow:0 0 0 0 rgba(108,92,231,0.4)}70%{box-shadow:0 0 0 12px rgba(108,92,231,0)}100%{box-shadow:0 0 0 0 rgba(108,92,231,0)}}
         @keyframes skeletonShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
         @keyframes bubbleBurst{0%{transform:translate(0,0) scale(0);opacity:0}12%{transform:translate(calc(var(--midX) * 0.4),calc(var(--midY) * 0.4)) scale(1.1);opacity:1}50%{transform:translate(var(--midX),var(--midY)) scale(1);opacity:0.9}80%{opacity:0.4}100%{transform:translate(var(--endX),var(--endY)) scale(0.3);opacity:0}}
-        @keyframes paintDrop{0%{transform:scale(0);border-radius:60% 40% 70% 30% / 50% 60% 40% 50%}40%{transform:scale(0.6);border-radius:45% 55% 50% 50% / 55% 45% 50% 50%}70%{transform:scale(0.9);border-radius:50% 50% 48% 52% / 50% 50% 50% 50%}100%{transform:scale(1);border-radius:50%}}
         @keyframes scrollHint{0%,100%{opacity:0.4;transform:translateY(0)}50%{opacity:1;transform:translateY(6px)}}
       `}</style>
 
@@ -2510,7 +2484,7 @@ export default function PasoLive() {
                   animation: "slideUp 0.3s cubic-bezier(0.16,1,0.3,1) both",
                 }}>
                   {BG_THEMES.map(t => (
-                    <button key={t.id} onClick={(e) => handleBgThemeChange(t.id, e)}
+                    <button key={t.id} onClick={() => handleBgThemeChange(t.id)}
                       title={t.name}
                       style={{
                         width: 28, height: 28, borderRadius: "50%",
