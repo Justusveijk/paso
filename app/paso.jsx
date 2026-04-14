@@ -605,11 +605,11 @@ const ACCENT = "#6C5CE7";
 
 /* ─── BACKGROUND THEMES ─── */
 const BG_THEMES = [
-  { id: "lavender", name: "Lavender", bg: "linear-gradient(135deg, #ece9f8, #dce4f5, #d5e5dd, #e8e4f5)", solid: "#ece9f8", animated: true },
-  { id: "periwinkle", name: "Periwinkle", bg: "linear-gradient(135deg, #c9d5f0, #b8c8ee)", solid: "#c9d5f0" },
-  { id: "sage", name: "Sage", bg: "linear-gradient(135deg, #d5e5dd, #c4d9cf)", solid: "#d5e5dd" },
-  { id: "slate", name: "Slate", bg: "linear-gradient(135deg, #2e3350, #3a3d6b)", solid: "#2e3350", dark: true },
-  { id: "midnight", name: "Midnight", bg: "linear-gradient(135deg, #1a1b2e, #252342)", solid: "#1a1b2e", dark: true },
+  { id: "aurora", name: "Aurora", bg: "linear-gradient(135deg, #ece9f8, #dce4f5, #d5e5dd, #fde8f0, #fef3e2, #ece9f8)", solid: "#ece9f8", animated: true },
+  { id: "periwinkle", name: "Periwinkle", bg: "linear-gradient(135deg, #dce4f5 0%, #c9d5f0 100%)", solid: "#dce4f5" },
+  { id: "sage", name: "Sage", bg: "linear-gradient(135deg, #d5e5dd 0%, #c4d9cf 100%)", solid: "#d5e5dd" },
+  { id: "slate", name: "Slate", bg: "linear-gradient(135deg, #2e3350 0%, #3a3d6b 100%)", solid: "#2e3350", dark: true },
+  { id: "blush", name: "Blush", bg: "linear-gradient(135deg, #fde8f0 0%, #f5d5e8 100%)", solid: "#fde8f0" },
 ];
 const INK = "var(--ink)";
 const INK70 = "var(--ink70)";
@@ -1588,7 +1588,8 @@ export default function PasoLive() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [bgTheme, setBgTheme] = useState("lavender");
+  const [bgTheme, setBgTheme] = useState("aurora");
+  const freeTrialRef = useRef(null);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [shareId, setShareId] = useState(null);
   const [shareStatus, setShareStatus] = useState(""); // "", "saved", "copied", "error"
@@ -1639,7 +1640,8 @@ export default function PasoLive() {
   // Load saved background theme
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("paso-bg-theme");
+      let saved = localStorage.getItem("paso-bg-theme");
+      if (saved === "lavender" || saved === "midnight") { saved = "aurora"; localStorage.setItem("paso-bg-theme", "aurora"); }
       if (saved && BG_THEMES.find(t => t.id === saved)) setBgTheme(saved);
     } catch {}
   }, []);
@@ -1648,15 +1650,7 @@ export default function PasoLive() {
   useEffect(() => {
     const theme = BG_THEMES.find(t => t.id === bgTheme);
     if (!theme) return;
-    if (theme.animated) {
-      document.body.style.background = theme.bg;
-      document.body.style.backgroundSize = "400% 400%";
-      document.body.style.animation = "gradientShift 12s ease infinite";
-    } else {
-      document.body.style.background = theme.bg;
-      document.body.style.backgroundSize = "";
-      document.body.style.animation = "none";
-    }
+    document.body.style.background = theme.solid;
   }, [bgTheme]);
 
   const [themeReveal, setThemeReveal] = useState(null);
@@ -1667,12 +1661,12 @@ export default function PasoLive() {
     const rect = e?.currentTarget?.getBoundingClientRect();
     const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
     const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
-    setThemeReveal({ x, y, bg: theme.bg, animated: theme.animated });
+    setThemeReveal({ x, y, bg: theme.animated ? theme.bg : theme.solid, animated: theme.animated });
     setTimeout(() => {
       setBgTheme(id);
       try { localStorage.setItem("paso-bg-theme", id); } catch {}
-      setTimeout(() => setThemeReveal(null), 100);
-    }, 600);
+      setTimeout(() => setThemeReveal(null), 50);
+    }, 700);
     setShowThemePicker(false);
   };
 
@@ -1682,21 +1676,22 @@ export default function PasoLive() {
   useEffect(() => {
     const root = document.documentElement;
     if (isDarkTheme) {
-      root.style.setProperty('--ink', 'rgba(255,255,255,0.9)');
-      root.style.setProperty('--ink70', 'rgba(255,255,255,0.7)');
-      root.style.setProperty('--ink60', 'rgba(255,255,255,0.65)');
-      root.style.setProperty('--ink50', 'rgba(255,255,255,0.6)');
-      root.style.setProperty('--ink45', 'rgba(255,255,255,0.55)');
-      root.style.setProperty('--ink40', 'rgba(255,255,255,0.5)');
-      root.style.setProperty('--ink30', 'rgba(255,255,255,0.42)');
-      root.style.setProperty('--ink25', 'rgba(255,255,255,0.35)');
-      root.style.setProperty('--ink22', 'rgba(255,255,255,0.3)');
-      root.style.setProperty('--ink12', 'rgba(255,255,255,0.14)');
-      root.style.setProperty('--ink08', 'rgba(255,255,255,0.1)');
-      root.style.setProperty('--ink-border', 'rgba(255,255,255,0.12)');
+      root.style.setProperty('--ink', '#f0eef8');
+      root.style.setProperty('--ink70', '#c8c4e0');
+      root.style.setProperty('--ink60', '#b8b4d0');
+      root.style.setProperty('--ink50', '#a8a2c0');
+      root.style.setProperty('--ink45', '#9890b8');
+      root.style.setProperty('--ink40', '#8880a8');
+      root.style.setProperty('--ink30', '#786fa0');
+      root.style.setProperty('--ink25', '#685f90');
+      root.style.setProperty('--ink22', '#5a5280');
+      root.style.setProperty('--ink12', 'rgba(240,238,248,0.14)');
+      root.style.setProperty('--ink08', 'rgba(240,238,248,0.1)');
+      root.style.setProperty('--ink-border', 'rgba(255,255,255,0.14)');
       root.style.setProperty('--ink-divider', 'rgba(255,255,255,0.08)');
       root.style.setProperty('--ink-bg-subtle', 'rgba(255,255,255,0.08)');
       root.style.setProperty('--ink-disabled', 'rgba(255,255,255,0.25)');
+      root.style.setProperty('--accent', '#b8b0f0');
     } else {
       root.style.setProperty('--ink', '#1a1a2e');
       root.style.setProperty('--ink70', 'rgba(26,26,46,0.75)');
@@ -1713,6 +1708,7 @@ export default function PasoLive() {
       root.style.setProperty('--ink-divider', 'rgba(26,26,46,0.05)');
       root.style.setProperty('--ink-bg-subtle', 'rgba(26,26,46,0.06)');
       root.style.setProperty('--ink-disabled', 'rgba(26,26,46,0.2)');
+      root.style.setProperty('--accent', '#6C5CE7');
     }
   }, [isDarkTheme]);
 
@@ -2374,25 +2370,34 @@ export default function PasoLive() {
   };
 
   const curTheme = BG_THEMES.find(t => t.id === bgTheme) || BG_THEMES[0];
-  const mainBgStyle = curTheme.animated
-    ? { background: curTheme.bg, backgroundSize: "400% 400%", animation: "gradientShift 12s ease infinite" }
-    : { background: curTheme.bg };
 
   return (
     <div style={{
       minHeight: "100vh",
-      ...mainBgStyle,
-      backgroundAttachment: mob ? "scroll" : "fixed", color: INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
+      color: INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
       transition: "color 0.5s ease",
     }}>
-      {/* Theme reveal overlay */}
+      {/* Background layer — always behind content */}
+      <div style={{
+        position: "fixed", inset: 0, zIndex: -2, pointerEvents: "none",
+        background: curTheme.bg,
+        ...(curTheme.animated ? { backgroundSize: "600% 600%", animation: "gradientShift 28s ease infinite" } : {}),
+      }} />
+
+      {/* Theme paint-drop reveal */}
       {themeReveal && (
         <div style={{
-          position: "fixed", inset: 0, zIndex: 9999, pointerEvents: "none",
+          position: "fixed", zIndex: -1, pointerEvents: "none",
+          left: themeReveal.x, top: themeReveal.y,
+          width: Math.max(window.innerWidth, window.innerHeight) * 3,
+          height: Math.max(window.innerWidth, window.innerHeight) * 3,
+          marginLeft: -(Math.max(window.innerWidth, window.innerHeight) * 1.5),
+          marginTop: -(Math.max(window.innerWidth, window.innerHeight) * 1.5),
           background: themeReveal.bg,
-          ...(themeReveal.animated ? { backgroundSize: "400% 400%", animation: "gradientShift 12s ease infinite" } : {}),
-          clipPath: `circle(0% at ${themeReveal.x}px ${themeReveal.y}px)`,
-          animation: `themeRevealExpand 600ms cubic-bezier(0.16,1,0.3,1) forwards`,
+          ...(themeReveal.animated ? { backgroundSize: "600% 600%", animation: "gradientShift 28s ease infinite" } : {}),
+          borderRadius: "60% 40% 70% 30% / 50% 60% 40% 50%",
+          transform: "scale(0)",
+          animation: "paintDrop 700ms cubic-bezier(0.4, 0, 0.2, 1) forwards",
         }} />
       )}
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -2423,7 +2428,7 @@ export default function PasoLive() {
         @keyframes successPulse{0%{box-shadow:0 0 0 0 rgba(108,92,231,0.4)}70%{box-shadow:0 0 0 12px rgba(108,92,231,0)}100%{box-shadow:0 0 0 0 rgba(108,92,231,0)}}
         @keyframes skeletonShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
         @keyframes bubbleBurst{0%{transform:translate(0,0) scale(0);opacity:0}12%{transform:translate(calc(var(--midX) * 0.4),calc(var(--midY) * 0.4)) scale(1.1);opacity:1}50%{transform:translate(var(--midX),var(--midY)) scale(1);opacity:0.9}80%{opacity:0.4}100%{transform:translate(var(--endX),var(--endY)) scale(0.3);opacity:0}}
-        @keyframes themeRevealExpand{from{clip-path:circle(0% at var(--cx,50%) var(--cy,50%))}to{clip-path:circle(150% at var(--cx,50%) var(--cy,50%))}}
+        @keyframes paintDrop{0%{transform:scale(0);border-radius:60% 40% 70% 30% / 50% 60% 40% 50%}40%{transform:scale(0.6);border-radius:45% 55% 50% 50% / 55% 45% 50% 50%}70%{transform:scale(0.9);border-radius:50% 50% 48% 52% / 50% 50% 50% 50%}100%{transform:scale(1);border-radius:50%}}
         @keyframes scrollHint{0%,100%{opacity:0.4;transform:translateY(0)}50%{opacity:1;transform:translateY(6px)}}
       `}</style>
 
@@ -2809,18 +2814,23 @@ export default function PasoLive() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 80, background: isDarkTheme ? "linear-gradient(transparent, #1a1b2e)" : "linear-gradient(transparent, #ece9f8)" }} />
+                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 80, background: isDarkTheme ? "linear-gradient(transparent, #2e3350)" : "linear-gradient(transparent, #ece9f8)" }} />
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <button
+                  onClick={() => { if (freeTrialRef.current) freeTrialRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); }}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginTop: 8, background: "none", border: "none", cursor: "pointer", padding: "8px 16px", borderRadius: 12, transition: "opacity 0.2s", width: "100%" }}
+                  onMouseEnter={(e) => e.currentTarget.style.opacity = "0.7"}
+                  onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
+                >
                   {Icon.lock(18, INK30)}
                   <p style={{ ...M, fontSize: 10, color: INK25, letterSpacing: "0.04em", textAlign: "center" }}>More steps waiting — unlock your full roadmap below</p>
-                </div>
+                </button>
               </div>
             </Reveal>
 
             {/* Payment → Free trial animated sequence */}
             <Reveal delay={0.8}>
-              <div style={{ maxWidth: 480, width: "100%", marginBottom: 24, position: "relative" }}>
+              <div ref={freeTrialRef} style={{ maxWidth: 480, width: "100%", marginBottom: 24, position: "relative" }}>
                 {/* Step 1: Show pricing briefly, then fade */}
                 {freeTrialStep <= 1 && (
                   <Glass dark={isDarkTheme} style={{

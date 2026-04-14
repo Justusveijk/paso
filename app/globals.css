@@ -16,18 +16,12 @@ html { scroll-behavior: smooth; }
   --ink-divider: rgba(26,26,46,0.05);
   --ink-bg-subtle: rgba(26,26,46,0.06);
   --ink-disabled: rgba(26,26,46,0.2);
+  --accent: #6C5CE7;
 }
 body {
-  background: linear-gradient(135deg, #ece9f8, #dce4f5, #d5e5dd, #e8e4f5);
-  background-size: 400% 400%;
-  animation: gradientShift 12s ease infinite;
+  background: #ece9f8;
   transition: background 0.8s ease, color 0.5s ease;
   color: var(--ink);
-}
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
 }
 ::selection { background: rgba(108,92,231,0.2); color: var(--ink); }
 input::placeholder, textarea::placeholder { color: var(--ink22); }
