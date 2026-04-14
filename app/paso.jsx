@@ -446,19 +446,22 @@ function Reveal({ children, delay = 0, direction = "up", style = {} }) {
 }
 
 /* ─── GLASS ─── */
-function Glass({ children, style = {}, hover = false, padding, onClick }) {
+function Glass({ children, style = {}, hover = false, padding, onClick, dark = false }) {
   const [h, setH] = useState(false);
   const mob = useIsMobile();
   const pad = padding !== undefined ? padding : (mob ? 18 : 28);
+  const bgBase = dark ? "rgba(255,255,255,0.07)" : "rgba(255,255,255,0.45)";
+  const bgHover = dark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.52)";
+  const borderAlpha = dark ? (h && hover ? 0.18 : 0.12) : (h && hover ? 0.7 : 0.55);
   return (
     <div onClick={onClick}
       onMouseEnter={() => { setH(true); if (hover) playHoverWhisper(); }}
       onMouseLeave={() => setH(false)}
       style={{
-        background: h && hover ? "rgba(255,255,255,0.52)" : "rgba(255,255,255,0.45)",
+        background: h && hover ? bgHover : bgBase,
         backdropFilter: "blur(28px) saturate(150%)",
         WebkitBackdropFilter: "blur(28px) saturate(150%)",
-        border: `1px solid rgba(255,255,255,${h && hover ? 0.7 : 0.55})`,
+        border: `1px solid rgba(255,255,255,${borderAlpha})`,
         borderRadius: 22, padding: pad,
         boxShadow: h && hover
           ? "0 20px 60px rgba(0,0,0,0.08), 0 0 40px rgba(108,92,231,0.06), inset 0 1px 0 rgba(255,255,255,0.8)"
@@ -602,11 +605,11 @@ const ACCENT = "#6C5CE7";
 
 /* ─── BACKGROUND THEMES ─── */
 const BG_THEMES = [
-  { id: "lavender", name: "Lavender", bg: "linear-gradient(135deg, #e8dff5 0%, #f5e6d3 15%, #d4e4f7 35%, #f0d9e8 55%, #dbecd4 75%, #e8dff5 100%)", solid: "#e8dff5" },
-  { id: "sand", name: "Warm Sand", bg: "linear-gradient(135deg, #f5efe6 0%, #ede4d4 25%, #f0e8d8 50%, #e8dcc8 75%, #f5efe6 100%)", solid: "#f5efe6" },
-  { id: "slate", name: "Deep Slate", bg: "linear-gradient(135deg, #2d3436 0%, #353b48 25%, #2f3640 50%, #3d4452 75%, #2d3436 100%)", solid: "#2d3436", dark: true },
-  { id: "sage", name: "Muted Sage", bg: "linear-gradient(135deg, #dfe6da 0%, #e4ded4 20%, #d8e2d0 45%, #e0d8ce 70%, #dfe6da 100%)", solid: "#dfe6da" },
-  { id: "navy", name: "Soft Navy", bg: "linear-gradient(135deg, #2c3e6b 0%, #34496e 25%, #2e4268 50%, #384d72 75%, #2c3e6b 100%)", solid: "#2c3e6b", dark: true },
+  { id: "lavender", name: "Lavender", bg: "linear-gradient(135deg, #ece9f8, #dce4f5, #d5e5dd, #e8e4f5)", solid: "#ece9f8", animated: true },
+  { id: "periwinkle", name: "Periwinkle", bg: "linear-gradient(135deg, #c9d5f0, #b8c8ee)", solid: "#c9d5f0" },
+  { id: "sage", name: "Sage", bg: "linear-gradient(135deg, #d5e5dd, #c4d9cf)", solid: "#d5e5dd" },
+  { id: "slate", name: "Slate", bg: "linear-gradient(135deg, #2e3350, #3a3d6b)", solid: "#2e3350", dark: true },
+  { id: "midnight", name: "Midnight", bg: "linear-gradient(135deg, #1a1b2e, #252342)", solid: "#1a1b2e", dark: true },
 ];
 const INK = "var(--ink)";
 const INK70 = "var(--ink70)";
@@ -1579,6 +1582,10 @@ export default function PasoLive() {
   const [credits, setCredits] = useState(0);
   const [selectedPack, setSelectedPack] = useState(null);
   const [hasPurchased, setHasPurchased] = useState(false);
+  const [freeTrialStep, setFreeTrialStep] = useState(0);
+  const [feedbackMotivation, setFeedbackMotivation] = useState("");
+  const [feedbackDescription, setFeedbackDescription] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [bgTheme, setBgTheme] = useState("lavender");
@@ -1640,12 +1647,32 @@ export default function PasoLive() {
   // Sync body background with theme
   useEffect(() => {
     const theme = BG_THEMES.find(t => t.id === bgTheme);
-    if (theme) document.body.style.backgroundColor = theme.solid;
+    if (!theme) return;
+    if (theme.animated) {
+      document.body.style.background = theme.bg;
+      document.body.style.backgroundSize = "400% 400%";
+      document.body.style.animation = "gradientShift 12s ease infinite";
+    } else {
+      document.body.style.background = theme.bg;
+      document.body.style.backgroundSize = "";
+      document.body.style.animation = "none";
+    }
   }, [bgTheme]);
 
-  const handleBgThemeChange = (id) => {
-    setBgTheme(id);
-    try { localStorage.setItem("paso-bg-theme", id); } catch {}
+  const [themeReveal, setThemeReveal] = useState(null);
+
+  const handleBgThemeChange = (id, e) => {
+    const theme = BG_THEMES.find(t => t.id === id);
+    if (!theme) return;
+    const rect = e?.currentTarget?.getBoundingClientRect();
+    const x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+    const y = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+    setThemeReveal({ x, y, bg: theme.bg, animated: theme.animated });
+    setTimeout(() => {
+      setBgTheme(id);
+      try { localStorage.setItem("paso-bg-theme", id); } catch {}
+      setTimeout(() => setThemeReveal(null), 100);
+    }, 600);
     setShowThemePicker(false);
   };
 
@@ -2050,7 +2077,6 @@ export default function PasoLive() {
         }),
       });
       const data = await res.json();
-      console.log("Push API response:", data);
       if (data.success) {
         setPushStatus("test-sent");
       } else {
@@ -2129,16 +2155,54 @@ export default function PasoLive() {
   const handleConfirmPurchase = () => {
     if (!selectedPack || hasPurchased) return;
     const amount = CREDIT_PACKS[selectedPack] || 0;
-    // FAKE PAYWALL - replace with Stripe checkout later
     setCredits((prev) => {
       const newCredits = prev + amount;
-      // Save credits to Supabase immediately if roadmap is saved
       if (shareId) {
         updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
       }
       return newCredits;
     });
     setHasPurchased(true);
+    if (soundEnabled) playRevealChime();
+  };
+
+  // Free trial — auto-animate pricing → free trial card
+  useEffect(() => {
+    if (step === "teaser" && freeTrialStep === 0) {
+      const t1 = setTimeout(() => setFreeTrialStep(1), 800);
+      const t2 = setTimeout(() => setFreeTrialStep(2), 1600);
+      return () => { clearTimeout(t1); clearTimeout(t2); };
+    }
+  }, [step, freeTrialStep]);
+
+  const handleFreeTrialStart = async () => {
+    setFeedbackSubmitting(true);
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+      if (supabaseUrl) {
+        await fetch(`${supabaseUrl}/rest/v1/early_access_feedback`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({
+            motivation: feedbackMotivation,
+            description: feedbackDescription,
+          }),
+        }).catch(() => {});
+      }
+    } catch {}
+    setCredits((prev) => {
+      const newCredits = prev + 15;
+      if (shareId) {
+        updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
+      }
+      return newCredits;
+    });
+    setHasPurchased(true);
+    setFeedbackSubmitting(false);
     if (soundEnabled) playRevealChime();
   };
 
@@ -2309,17 +2373,33 @@ export default function PasoLive() {
     }
   };
 
+  const curTheme = BG_THEMES.find(t => t.id === bgTheme) || BG_THEMES[0];
+  const mainBgStyle = curTheme.animated
+    ? { background: curTheme.bg, backgroundSize: "400% 400%", animation: "gradientShift 12s ease infinite" }
+    : { background: curTheme.bg };
+
   return (
     <div style={{
       minHeight: "100vh",
-      background: BG_THEMES.find(t => t.id === bgTheme)?.bg || BG_THEMES[0].bg,
+      ...mainBgStyle,
       backgroundAttachment: mob ? "scroll" : "fixed", color: INK, fontFamily: "'DM Sans', sans-serif", position: "relative",
-      transition: "background 0.8s ease, color 0.5s ease",
+      transition: "color 0.5s ease",
     }}>
+      {/* Theme reveal overlay */}
+      {themeReveal && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999, pointerEvents: "none",
+          background: themeReveal.bg,
+          ...(themeReveal.animated ? { backgroundSize: "400% 400%", animation: "gradientShift 12s ease infinite" } : {}),
+          clipPath: `circle(0% at ${themeReveal.x}px ${themeReveal.y}px)`,
+          animation: `themeRevealExpand 600ms cubic-bezier(0.16,1,0.3,1) forwards`,
+        }} />
+      )}
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       <style>{`
         *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}
+        @keyframes gradientShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
         ::selection{background:rgba(108,92,231,0.2);color:var(--ink)}
         input::placeholder,textarea::placeholder{color:var(--ink22)}
         input,textarea,select{font-size:16px!important}
@@ -2343,6 +2423,8 @@ export default function PasoLive() {
         @keyframes successPulse{0%{box-shadow:0 0 0 0 rgba(108,92,231,0.4)}70%{box-shadow:0 0 0 12px rgba(108,92,231,0)}100%{box-shadow:0 0 0 0 rgba(108,92,231,0)}}
         @keyframes skeletonShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
         @keyframes bubbleBurst{0%{transform:translate(0,0) scale(0);opacity:0}12%{transform:translate(calc(var(--midX) * 0.4),calc(var(--midY) * 0.4)) scale(1.1);opacity:1}50%{transform:translate(var(--midX),var(--midY)) scale(1);opacity:0.9}80%{opacity:0.4}100%{transform:translate(var(--endX),var(--endY)) scale(0.3);opacity:0}}
+        @keyframes themeRevealExpand{from{clip-path:circle(0% at var(--cx,50%) var(--cy,50%))}to{clip-path:circle(150% at var(--cx,50%) var(--cy,50%))}}
+        @keyframes scrollHint{0%,100%{opacity:0.4;transform:translateY(0)}50%{opacity:1;transform:translateY(6px)}}
       `}</style>
 
       {/* Ambient */}
@@ -2423,7 +2505,7 @@ export default function PasoLive() {
                   animation: "slideUp 0.3s cubic-bezier(0.16,1,0.3,1) both",
                 }}>
                   {BG_THEMES.map(t => (
-                    <button key={t.id} onClick={() => handleBgThemeChange(t.id)}
+                    <button key={t.id} onClick={(e) => handleBgThemeChange(t.id, e)}
                       title={t.name}
                       style={{
                         width: 28, height: 28, borderRadius: "50%",
@@ -2594,6 +2676,9 @@ export default function PasoLive() {
                 <p style={{ fontFamily: H, fontSize: 14, fontStyle: "italic", color: INK30 }}>"The path is made by walking."</p>
                 <span style={{ ...M, fontSize: 9, color: INK25, letterSpacing: "0.1em" }}>— Antonio Machado</span>
                 <span style={{ ...M, fontSize: 9, color: INK22, letterSpacing: "0.1em", marginTop: 24 }}>PASO · 2026</span>
+                <p style={{ ...B, fontSize: 11, fontStyle: "italic", color: INK12, lineHeight: 1.6, maxWidth: 360, textAlign: "center", marginTop: 16 }}>
+                  PASO is here to guide you, not guarantee outcomes. The steps we suggest are starting points — your progress depends on you, and that's the point.
+                </p>
               </div>
             </div>
           </div>
@@ -2675,7 +2760,7 @@ export default function PasoLive() {
         )}
 
         {/* ━━━ ROADMAP ━━━ */}
-        {/* TEASER - free action + paywall */}
+        {/* TEASER - first step clarity + free trial flow */}
         {step === "teaser" && roadmap && (
           <div style={{ animation: "fadeIn 0.8s ease both", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", paddingTop: mob ? 40 : 80 }}>
             <Reveal>
@@ -2684,87 +2769,167 @@ export default function PasoLive() {
               <p style={{ fontFamily: H, fontSize: 16, fontStyle: "italic", color: INK25, textAlign: "center", maxWidth: 440, marginBottom: 40 }}>{roadmap.tagline}</p>
             </Reveal>
 
+            {/* Warm intro above first step */}
+            <Reveal delay={0.2}>
+              <p style={{ fontFamily: H, fontSize: mob ? 18 : 22, fontWeight: 400, fontStyle: "italic", color: INK45, textAlign: "center", maxWidth: 400, marginBottom: 28, lineHeight: 1.6 }}>
+                You don't have to figure it all out. Just start here.
+              </p>
+            </Reveal>
+
             <Reveal delay={0.3}>
-              <Glass style={{ maxWidth: 480, padding: mob ? "24px 24px" : "28px 32px", marginBottom: 32 }}>
-                <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#00b894", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>{Icon.check(10, "#00b894")} Do this right now</div>
-                <p style={{ ...B, fontSize: 16, color: INK70, lineHeight: 1.7, marginBottom: 8 }}>{roadmap.phases[0].actions[0]}</p>
-                <p style={{ ...B, fontSize: 12, color: INK25, lineHeight: 1.5 }}>
-                  This is step one of your {roadmap.timeline} roadmap. {roadmap.phases.length} phases, {roadmap.phases.reduce((s, p) => s + p.milestones.length, 0)} milestones ahead.
-                </p>
+              <Glass dark={isDarkTheme} style={{ maxWidth: 480, padding: mob ? "24px 24px" : "28px 32px", marginBottom: 12 }}>
+                <div style={{ ...M, fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#00b894", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>{Icon.check(10, "#00b894")} Your first step</div>
+                <p style={{ ...B, fontSize: 16, color: INK70, lineHeight: 1.7, marginBottom: 12 }}>{roadmap.phases[0].actions[0]}</p>
+                <div style={{ borderTop: `1px solid var(--ink-divider)`, paddingTop: 12 }}>
+                  <div style={{ ...M, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: INK25, marginBottom: 6 }}>Why this step</div>
+                  <p style={{ ...B, fontSize: 13, color: INK40, lineHeight: 1.6 }}>
+                    It's smaller than you think. This is step one of your {roadmap.timeline} roadmap — {roadmap.phases.length} phases, {roadmap.phases.reduce((s, p) => s + p.milestones.length, 0)} milestones ahead. But right now, just this one thing.
+                  </p>
+                </div>
               </Glass>
             </Reveal>
 
+            {/* Scroll indicator */}
             <Reveal delay={0.5}>
-              <div style={{ maxWidth: 480, width: "100%", marginBottom: 32, position: "relative" }}>
-                <div style={{ filter: "blur(6px)", opacity: 0.5, pointerEvents: "none", userSelect: "none" }}>
-                  {roadmap.phases.map((phase, i) => (
-                    <div key={i} style={{ padding: "14px 18px", marginBottom: 8, borderRadius: 12, background: "rgba(108,92,231,0.03)", border: "1px solid rgba(108,92,231,0.06)" }}>
-                      <div style={{ ...M, fontSize: 10, color: ACCENT, marginBottom: 4 }}>{phase.weeks}</div>
-                      <div style={{ ...B, fontSize: 14, color: INK50, fontWeight: 500 }}>{phase.title}</div>
-                      <div style={{ ...B, fontSize: 11, color: INK25, marginTop: 4 }}>{phase.milestones.length} milestones</div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>{Icon.lock(24, INK30)}</div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 0 24px", animation: "scrollHint 2s ease-in-out infinite" }}>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 4v12M5 11l5 5 5-5" stroke={INK25} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
               </div>
             </Reveal>
 
-            <Reveal delay={0.7}>
-              <Glass style={{ maxWidth: 480, padding: mob ? "28px 24px" : "32px 36px", marginBottom: 24 }}>
-                <p style={{ fontFamily: H, fontSize: mob ? 20 : 24, fontWeight: 400, color: INK, lineHeight: 1.5, marginBottom: 16 }}>You just took your first step.</p>
-                <p style={{ ...B, fontSize: 14, color: INK50, lineHeight: 1.7, marginBottom: 12 }}>
-                  One action is a start, but it's not a system. 92% of goals fail without one. Life coaches charge over 200 an hour. Habit apps cost 5/month and still leave the hard part to you.
-                </p>
-                <p style={{ ...B, fontSize: 14, color: INK60, lineHeight: 1.7, marginBottom: 20 }}>
-                  Paso builds you a real plan — checkable milestones, weekly nudges that actually help, calendar scheduling, and research behind every phase. All for the cost of a coffee.
-                </p>
-                <p style={{ ...M, fontSize: 11, color: INK30, marginBottom: 20 }}>Most people use 8-12 credits to go from idea to done.</p>
-                {!hasPurchased ? (<>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {[
-                      { id: "starter", name: "Starter", cr: 5, price: "\u20ac3", sub: "1 roadmap + extras" },
-                      { id: "builder", name: "Builder", cr: 15, price: "\u20ac7", sub: "Most popular", tag: true },
-                      { id: "unlimited", name: "Unlimited", cr: 99, price: "\u20ac12/mo", sub: "Unlimited roadmaps" },
-                    ].map((pack) => {
-                      const selected = selectedPack === pack.id;
-                      return (
-                        <button key={pack.id} onClick={() => handleSelectPack(pack.id)} style={{
+            {/* Locked preview teaser */}
+            <Reveal delay={0.6}>
+              <div style={{ maxWidth: 480, width: "100%", marginBottom: 32, position: "relative" }}>
+                <div style={{ overflow: "hidden", maxHeight: 160, position: "relative" }}>
+                  <div style={{ filter: "blur(4px)", opacity: 0.4, pointerEvents: "none", userSelect: "none" }}>
+                    {roadmap.phases.slice(0, 3).map((phase, i) => (
+                      <div key={i} style={{ padding: "14px 18px", marginBottom: 8, borderRadius: 12, background: "var(--ink-bg-subtle)", border: "1px solid var(--ink-divider)" }}>
+                        <div style={{ ...M, fontSize: 10, color: ACCENT, marginBottom: 4 }}>{phase.weeks}</div>
+                        <div style={{ ...B, fontSize: 14, color: INK50, fontWeight: 500 }}>{phase.title}</div>
+                        <div style={{ ...B, fontSize: 11, color: INK25, marginTop: 4 }}>{phase.milestones.length} milestones</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 80, background: isDarkTheme ? "linear-gradient(transparent, #1a1b2e)" : "linear-gradient(transparent, #ece9f8)" }} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginTop: 8 }}>
+                  {Icon.lock(18, INK30)}
+                  <p style={{ ...M, fontSize: 10, color: INK25, letterSpacing: "0.04em", textAlign: "center" }}>More steps waiting — unlock your full roadmap below</p>
+                </div>
+              </div>
+            </Reveal>
+
+            {/* Payment → Free trial animated sequence */}
+            <Reveal delay={0.8}>
+              <div style={{ maxWidth: 480, width: "100%", marginBottom: 24, position: "relative" }}>
+                {/* Step 1: Show pricing briefly, then fade */}
+                {freeTrialStep <= 1 && (
+                  <Glass dark={isDarkTheme} style={{
+                    padding: mob ? "28px 24px" : "32px 36px",
+                    opacity: freeTrialStep === 1 ? 0 : 1,
+                    transform: freeTrialStep === 1 ? "translateY(-20px) scale(0.95)" : "translateY(0) scale(1)",
+                    transition: "all 0.8s cubic-bezier(0.16,1,0.3,1)",
+                  }}>
+                    <p style={{ fontFamily: H, fontSize: mob ? 18 : 22, fontWeight: 400, color: INK, lineHeight: 1.5, marginBottom: 16, textAlign: "center" }}>Choose your plan</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {[
+                        { name: "Starter", price: "\u20ac3", sub: "5 credits" },
+                        { name: "Builder", price: "\u20ac7", sub: "15 credits" },
+                        { name: "Unlimited", price: "\u20ac12/mo", sub: "Unlimited" },
+                      ].map((pack) => (
+                        <div key={pack.name} style={{
                           display: "flex", alignItems: "center", justifyContent: "space-between",
-                          padding: "14px 20px", borderRadius: 14, cursor: "pointer",
-                          border: selected ? `2px solid ${ACCENT}` : "1px solid var(--ink-border)",
-                          background: selected ? "rgba(108,92,231,0.06)" : "rgba(255,255,255,0.6)",
-                          transition: "all 0.25s ease", position: "relative",
-                          transform: selected ? "scale(1.02)" : "scale(1)",
-                          boxShadow: selected ? "0 2px 16px rgba(108,92,231,0.15)" : "none",
+                          padding: "14px 20px", borderRadius: 14,
+                          border: "1px solid var(--ink-border)",
+                          background: isDarkTheme ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.6)",
                         }}>
-                          {pack.tag && !selected && <span style={{ position: "absolute", top: -9, right: 14, ...M, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", background: ACCENT, color: "#fff", padding: "3px 10px", borderRadius: 6 }}>Most popular</span>}
-                          {selected && <span style={{ position: "absolute", top: -9, right: 14, ...M, fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", background: ACCENT, color: "#fff", padding: "3px 10px", borderRadius: 6 }}>Selected</span>}
-                          <div style={{ textAlign: "left" }}>
-                            <div style={{ ...B, fontSize: 15, color: selected ? INK : INK70, fontWeight: 600 }}>{pack.name}</div>
-                            <div style={{ ...M, fontSize: 10, color: selected ? INK45 : INK25, marginTop: 2 }}>{pack.cr} credits &middot; {pack.sub}</div>
+                          <div>
+                            <div style={{ ...B, fontSize: 15, color: INK70, fontWeight: 600 }}>{pack.name}</div>
+                            <div style={{ ...M, fontSize: 10, color: INK25, marginTop: 2 }}>{pack.sub}</div>
                           </div>
                           <div style={{ ...M, fontSize: 18, color: ACCENT, fontWeight: 700 }}>{pack.price}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {selectedPack && (
-                    <button onClick={handleConfirmPurchase} style={{
-                      ...M, fontSize: 13, letterSpacing: "0.04em", padding: "15px 32px", borderRadius: 14,
-                      border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
-                      cursor: "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
-                      width: "100%", marginTop: 16, transition: "all 0.3s ease",
-                      animation: "slideUp 0.3s ease both",
-                    }}>
-                      Get {CREDIT_PACKS[selectedPack]} credits &rarr;
-                    </button>
-                  )}
-                  <p style={{ ...M, fontSize: 9, color: INK22, textAlign: "center", marginTop: 14, letterSpacing: "0.04em" }}>Secure checkout coming soon.</p>
-                </>) : (
-                  <div style={{ animation: "slideUp 0.5s ease both" }}>
+                        </div>
+                      ))}
+                    </div>
+                  </Glass>
+                )}
+
+                {/* Step 2: Free trial card slides in */}
+                {freeTrialStep >= 2 && !hasPurchased && (
+                  <Glass dark={isDarkTheme} style={{
+                    padding: mob ? "32px 24px" : "40px 36px",
+                    animation: "slideUp 0.8s cubic-bezier(0.16,1,0.3,1) both",
+                  }}>
+                    <div style={{ textAlign: "center", marginBottom: 28 }}>
+                      <p style={{ fontFamily: H, fontSize: mob ? 22 : 28, fontWeight: 400, color: INK, lineHeight: 1.4, marginBottom: 10 }}>
+                        You're in luck — try PASO completely free.
+                      </p>
+                      <p style={{ ...B, fontSize: 14, color: INK45, lineHeight: 1.7 }}>
+                        Help us improve while we help you. We're building something meaningful and your feedback shapes what Paso becomes.
+                      </p>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      <div>
+                        <label style={{ ...M, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: INK25, display: "block", marginBottom: 8 }}>What brought you to PASO today?</label>
+                        <textarea
+                          value={feedbackMotivation}
+                          onChange={(e) => setFeedbackMotivation(e.target.value)}
+                          placeholder="I want to..."
+                          rows={2}
+                          style={{
+                            ...B, width: "100%", padding: "12px 16px", borderRadius: 12,
+                            border: "1px solid var(--ink-border)",
+                            background: isDarkTheme ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.6)",
+                            color: INK, fontSize: 14, resize: "none",
+                            outline: "none", transition: "border-color 0.3s",
+                          }}
+                          onFocus={(e) => e.target.style.borderColor = ACCENT}
+                          onBlur={(e) => e.target.style.borderColor = ""}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ ...M, fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: INK25, display: "block", marginBottom: 10 }}>How would you describe yourself?</label>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {[
+                            "I know what I want but don't know how to start",
+                            "I'm searching for direction",
+                            "I want to build better habits",
+                            "Something else",
+                          ].map((opt) => (
+                            <button key={opt} onClick={() => setFeedbackDescription(opt)} style={{
+                              ...B, fontSize: 13, padding: "11px 16px", borderRadius: 12, textAlign: "left",
+                              border: feedbackDescription === opt ? `2px solid ${ACCENT}` : "1px solid var(--ink-border)",
+                              background: feedbackDescription === opt ? "rgba(108,92,231,0.08)" : (isDarkTheme ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.5)"),
+                              color: INK60, cursor: "pointer",
+                              transition: "all 0.2s ease",
+                              transform: feedbackDescription === opt ? "scale(1.01)" : "scale(1)",
+                            }}>
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button onClick={handleFreeTrialStart} disabled={feedbackSubmitting} style={{
+                        ...M, fontSize: 14, letterSpacing: "0.04em", padding: "16px 32px", borderRadius: 14,
+                        border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
+                        cursor: "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
+                        width: "100%", marginTop: 8, transition: "all 0.3s ease",
+                        opacity: feedbackSubmitting ? 0.7 : 1,
+                      }}>
+                        {feedbackSubmitting ? "Setting up..." : "Start for free \u2192"}
+                      </button>
+                    </div>
+                  </Glass>
+                )}
+
+                {/* After free trial activated — unlock button */}
+                {hasPurchased && (
+                  <Glass dark={isDarkTheme} style={{ padding: mob ? "28px 24px" : "32px 36px", animation: "slideUp 0.5s ease both" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", marginBottom: 12 }}>
                       {Icon.check(14, "#00b894")}
-                      <span style={{ ...M, fontSize: 12, color: "#00b894" }}>{credits} credits added to your account</span>
+                      <span style={{ ...M, fontSize: 12, color: "#00b894" }}>You're in — {credits} free credits added</span>
                     </div>
                     <button onClick={handleUnlock} style={{
                       ...M, fontSize: 14, letterSpacing: "0.04em", padding: "16px 32px", borderRadius: 14,
@@ -2773,21 +2938,21 @@ export default function PasoLive() {
                       width: "100%", transition: "all 0.3s ease",
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     }}>
-                      Unlock my full roadmap (1 credit)
+                      Unlock my full roadmap
                     </button>
                     <p style={{ ...M, fontSize: 10, color: INK25, textAlign: "center", marginTop: 10 }}>
                       {credits - 1} credits will remain for breakdowns, adjustments, and new roadmaps.
                     </p>
-                  </div>
+                  </Glass>
                 )}
-              </Glass>
+              </div>
             </Reveal>
 
-            <Reveal delay={0.9}>
+            {/* Disclaimer */}
+            <Reveal delay={1.0}>
               <div style={{ maxWidth: 480, textAlign: "center", padding: "24px 0 48px" }}>
-                <p style={{ fontFamily: H, fontSize: 14, fontStyle: "italic", color: INK22, marginBottom: 10 }}>"But can't I just use ChatGPT?"</p>
-                <p style={{ ...B, fontSize: 12, color: INK25, lineHeight: 1.65, maxWidth: 380, margin: "0 auto" }}>
-                  ChatGPT gives you a wall of text that vanishes when you close the tab. Paso gives you a living system that stays on your homescreen and keeps showing up — until you've actually done it.
+                <p style={{ ...B, fontSize: 12, fontStyle: "italic", color: INK22, lineHeight: 1.65, maxWidth: 400, margin: "0 auto" }}>
+                  PASO is here to guide you, not guarantee outcomes. The steps we suggest are starting points — your progress depends on you, and that's the point.
                 </p>
               </div>
             </Reveal>

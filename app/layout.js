@@ -4,7 +4,7 @@ export const metadata = {
   title: "Paso — AI-Powered Roadmaps, One Step at a Time",
   description:
     "Tell Paso your goal. Get a personalized roadmap with checkable milestones, scientific references, and side quests.",
-  metadataBase: new URL(process.env.NEXT_PUBLIC_URL || "https://callis.vercel.app"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_URL || "https://paso.numinalabs.app"),
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "32x32" },
@@ -49,7 +49,7 @@ export default function RootLayout({ children }) {
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <meta name="theme-color" content="#6C5CE7" />
-        <meta property="og:image" content="https://callis.vercel.app/og-image.png" />
+        <meta property="og:image" content="https://paso.numinalabs.app/og-image.png" />
         <link
           href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
           rel="stylesheet"
