@@ -1,6 +1,19 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
-body { background: #e8dff5; transition: background-color 0.8s ease; }
+body {
+  background: linear-gradient(135deg, #ece9f8 0%, #dce4f5 14%, #d5e5dd 28%, #fde8f0 42%, #fef3e2 57%, #e8f4fd 71%, #f0f4e8 85%, #ece9f8 100%);
+  background-size: 600% 600%;
+  animation: aurora 40s ease infinite;
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+@keyframes aurora {
+  0% { background-position: 0% 50%; }
+  25% { background-position: 50% 100%; }
+  50% { background-position: 100% 50%; }
+  75% { background-position: 50% 0%; }
+  100% { background-position: 0% 50%; }
+}
 ::selection { background: rgba(108,92,231,0.2); color: #1a1a2e; }
 input::placeholder, textarea::placeholder { color: rgba(26,26,46,0.22); }
 input, textarea, select { font-size: 16px !important; }

@@ -601,8 +601,9 @@ const B = { fontFamily: "'DM Sans', sans-serif" };
 const ACCENT = "#6C5CE7";
 
 /* ─── BACKGROUND THEMES ─── */
+const AURORA_GRADIENT = "linear-gradient(135deg, #ece9f8 0%, #dce4f5 14%, #d5e5dd 28%, #fde8f0 42%, #fef3e2 57%, #e8f4fd 71%, #f0f4e8 85%, #ece9f8 100%)";
 const BG_THEMES = [
-  { id: "lavender", name: "Lavender Dream", bg: "linear-gradient(135deg, #ece9f8 0%, #ddd6f3 50%, #e8e4f5 100%)", dark: false },
+  { id: "aurora", name: "Aurora", bg: AURORA_GRADIENT, dark: false, animated: true },
   { id: "periwinkle", name: "Periwinkle Dusk", bg: "linear-gradient(135deg, #dce4f5 0%, #c9d5f0 50%, #d8dff5 100%)", dark: false },
   { id: "sage", name: "Sage Mist", bg: "linear-gradient(135deg, #e4ede9 0%, #d5e5dd 50%, #dde8e3 100%)", dark: false },
   { id: "slate", name: "Slate Bloom", bg: "linear-gradient(135deg, #2e3350 0%, #3a3d6b 50%, #2b3060 100%)", dark: true },
@@ -1581,7 +1582,7 @@ export default function PasoLive() {
   const [hasPurchased, setHasPurchased] = useState(false);
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [bgTheme, setBgTheme] = useState("lavender");
+  const [bgTheme, setBgTheme] = useState("aurora");
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [shareId, setShareId] = useState(null);
   const [shareStatus, setShareStatus] = useState(""); // "", "saved", "copied", "error"
@@ -1632,7 +1633,8 @@ export default function PasoLive() {
   // Load saved background theme
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("paso-bg-theme");
+      let saved = localStorage.getItem("paso-bg-theme");
+      if (saved === "lavender") saved = "aurora";
       if (saved && BG_THEMES.find(t => t.id === saved)) setBgTheme(saved);
     } catch {}
   }, []);
@@ -1643,8 +1645,16 @@ export default function PasoLive() {
     if (theme) {
       document.body.style.background = theme.bg;
       document.body.style.backgroundAttachment = "fixed";
-      document.body.style.transition = "background 0.8s ease";
       document.body.style.minHeight = "100vh";
+      if (theme.animated) {
+        document.body.style.backgroundSize = "600% 600%";
+        document.body.style.animation = "aurora 40s ease infinite";
+        document.body.style.transition = "none";
+      } else {
+        document.body.style.backgroundSize = "";
+        document.body.style.animation = "none";
+        document.body.style.transition = "background 0.8s ease";
+      }
     }
   }, [bgTheme]);
 
@@ -2286,7 +2296,8 @@ export default function PasoLive() {
       <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
       <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
       <style>{`
-        *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{background:linear-gradient(135deg, #ece9f8 0%, #ddd6f3 50%, #e8e4f5 100%)}
+        *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{background:linear-gradient(135deg, #ece9f8 0%, #dce4f5 14%, #d5e5dd 28%, #fde8f0 42%, #fef3e2 57%, #e8f4fd 71%, #f0f4e8 85%, #ece9f8 100%);background-size:600% 600%;animation:aurora 40s ease infinite}
+        @keyframes aurora{0%{background-position:0% 50%}25%{background-position:50% 100%}50%{background-position:100% 50%}75%{background-position:50% 0%}100%{background-position:0% 50%}}
         ::selection{background:rgba(108,92,231,0.2);color:#1a1a2e}
         input::placeholder,textarea::placeholder{color:rgba(26,26,46,0.22)}
         [data-theme="dark"] h1,[data-theme="dark"] h2,[data-theme="dark"] h3,[data-theme="dark"] h4,[data-theme="dark"] h5,[data-theme="dark"] h6{color:#ffffff!important}
