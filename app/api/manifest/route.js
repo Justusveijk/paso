@@ -15,7 +15,7 @@ export async function GET(req) {
     start_url: roadmapId ? `/?r=${roadmapId}` : "/",
     id: "paso",
     display: "standalone",
-    background_color: "#ece9f8",
+    background_color: "#e8e4f5",
     theme_color: "#6C5CE7",
     orientation: "portrait-primary",
     icons: [
