@@ -1973,51 +1973,73 @@ export default function PasoLive() {
   };
 
   const handleNudgeSave = async () => {
-    if (!shareId) return;
-
     // Check if push is supported
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
 
     if (!("serviceWorker" in navigator)) {
+      console.warn("[Paso Push] serviceWorker not supported");
       setPushStatus("unsupported");
       return;
     }
     if (!("PushManager" in window)) {
+      console.warn("[Paso Push] PushManager not available");
       setPushStatus(isIOS ? "ios-safari" : "unsupported");
       return;
     }
     if (!("Notification" in window)) {
+      console.warn("[Paso Push] Notification API not available");
       setPushStatus(isIOS ? "ios-safari" : "unsupported");
       return;
     }
 
     setPushStatus("requesting");
     try {
-      // Register service worker
+      // Ensure roadmap is saved first (so we have a shareId to store the subscription against)
+      const id = await ensureSaved();
+      if (!id) { console.error("[Paso Push] Failed to save roadmap — no shareId"); setPushStatus("error"); return; }
+
+      // Register service worker and wait for it to be active
+      console.log("[Paso Push] Registering service worker...");
       const reg = await navigator.serviceWorker.register("/sw.js");
-      await navigator.serviceWorker.ready;
+      const swReady = await navigator.serviceWorker.ready;
+      console.log("[Paso Push] Service worker ready:", swReady.active?.state);
 
       // Request notification permission
+      console.log("[Paso Push] Requesting permission...");
       const perm = await Notification.requestPermission();
+      console.log("[Paso Push] Permission result:", perm);
       if (perm !== "granted") { setPushStatus("denied"); return; }
 
-      // Subscribe to push
+      // Subscribe to push — convert VAPID key to Uint8Array
       const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!vapidKey) { console.error("VAPID key missing"); setPushStatus("error"); return; }
+      if (!vapidKey) { console.error("[Paso Push] VAPID public key missing from env"); setPushStatus("error"); return; }
 
-      const sub = await reg.pushManager.subscribe({
+      // Base64url → Uint8Array conversion for applicationServerKey
+      const urlBase64ToUint8Array = (base64String) => {
+        const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+        const raw = atob(base64);
+        const arr = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        return arr;
+      };
+
+      console.log("[Paso Push] Subscribing to push...");
+      const sub = await swReady.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: vapidKey,
+        applicationServerKey: urlBase64ToUint8Array(vapidKey),
       });
       const subJson = JSON.stringify(sub);
+      console.log("[Paso Push] Subscribed, saving to server...");
 
       // Save subscription + frequency to server
-      await patchRoadmap(shareId, { push_subscription: subJson, nudge_enabled: true, nudge_frequency: nudgeFrequency, user_name: sanitize(userName, 50) || null });
+      await patchRoadmap(id, { push_subscription: subJson, nudge_enabled: true, nudge_frequency: nudgeFrequency, user_name: sanitize(userName, 50) || null });
+      console.log("[Paso Push] Subscription saved successfully");
       setPushStatus("granted");
       setNudgeSaved(true);
     } catch (e) {
-      console.error("Push setup error:", e);
+      console.error("[Paso Push] Setup error:", e);
       if (isIOS && !isStandalone) {
         setPushStatus("ios-safari");
       } else {
