@@ -1586,6 +1586,10 @@ export default function PasoLive() {
   const [feedbackMotivation, setFeedbackMotivation] = useState("");
   const [feedbackDescription, setFeedbackDescription] = useState("");
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  // Token costs
+  const TOKEN_COST_GENERATE = 4;
+  const TOKEN_COST_EXPAND = 2;
+  const TOKEN_COST_ADJUST = 3;
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [bgTheme, setBgTheme] = useState("aurora");
@@ -1597,12 +1601,14 @@ export default function PasoLive() {
   const [isSharedView, setIsSharedView] = useState(false);
   const [showInstallTip, setShowInstallTip] = useState(false);
 
-  // Stripe / paid mode
-  const [isPaidMode, setIsPaidMode] = useState(false); // false = freeMode (default), true = Stripe paywall
-  const [stripePrice, setStripePrice] = useState(null); // { amount, currency, formatted }
-  const [isPaid, setIsPaid] = useState(false); // true if this roadmap has been paid for
+  // Token / payment system
+  const [isPaidMode, setIsPaidMode] = useState(false); // false = freeMode (default), true = token paywall
+  const [tokenBalance, setTokenBalance] = useState(0);
+  const [showPackSelection, setShowPackSelection] = useState(false);
   const [showUnlockCelebration, setShowUnlockCelebration] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [celebrationPack, setCelebrationPack] = useState(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(null); // which pack is loading
+  const [userId, setUserId] = useState(null); // persistent user ID for token tracking
 
   // Adjust roadmap
   const [showAdjust, setShowAdjust] = useState(false);
@@ -1722,25 +1728,42 @@ export default function PasoLive() {
   // Fetch live roadmap count
   useEffect(() => { fetchRoadmapCount().then((n) => { if (n > 0) setLiveCount(n); }); }, []);
 
-  // Fetch payment config from Numina Labs admin
+  // Initialize userId (persistent per browser) and fetch config + token balance
   useEffect(() => {
+    // Get or create persistent userId
+    let uid = null;
+    try {
+      uid = localStorage.getItem("paso-user-id");
+      if (!uid) {
+        uid = "u" + generateId() + generateId();
+        localStorage.setItem("paso-user-id", uid);
+      }
+    } catch {
+      uid = "u" + generateId() + generateId();
+    }
+    setUserId(uid);
+
     (async () => {
+      // Fetch admin config
       try {
         const configRes = await fetch("https://numinalabs.app/api/config");
         if (configRes.ok) {
           const config = await configRes.json();
-          const freeMode = config?.paso?.freeMode !== false; // default true
+          const freeMode = config?.paso?.freeMode !== false;
           setIsPaidMode(!freeMode);
-          if (!freeMode) {
-            // Fetch Stripe price for display
-            const priceRes = await fetch("/api/stripe/price");
-            if (priceRes.ok) {
-              const priceData = await priceRes.json();
-              setStripePrice(priceData);
-            }
-          }
         }
-      } catch { /* config unavailable — stay in free mode */ }
+      } catch { /* stay in free mode */ }
+
+      // Fetch token balance
+      if (uid) {
+        try {
+          const tokenRes = await fetch(`/api/tokens?userId=${uid}`, { headers: API_HEADERS });
+          if (tokenRes.ok) {
+            const data = await tokenRes.json();
+            setTokenBalance(data.tokens || 0);
+          }
+        } catch {}
+      }
     })();
   }, []);
 
@@ -1753,6 +1776,28 @@ export default function PasoLive() {
     const urlParams = new URLSearchParams(window.location.search);
     const queryId = urlParams.get("r");
 
+    // Handle Stripe return — ?unlocked=true&pack=X (may or may not have ?r=)
+    const justUnlocked = urlParams.get("unlocked") === "true";
+    const purchasedPack = urlParams.get("pack");
+    if (justUnlocked && purchasedPack) {
+      const PACK_TOKENS = { chispa: 8, camino: 24, destino: 64 };
+      setCelebrationPack({ name: purchasedPack, tokens: PACK_TOKENS[purchasedPack] || 0 });
+      setShowUnlockCelebration(true);
+      // Refresh token balance
+      const uid = (() => { try { return localStorage.getItem("paso-user-id"); } catch { return null; } })();
+      if (uid) {
+        fetch(`/api/tokens?userId=${uid}`, { headers: API_HEADERS })
+          .then(r => r.json())
+          .then(d => setTokenBalance(d.tokens || 0))
+          .catch(() => {});
+      }
+      // Clean URL params
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("unlocked");
+      cleanUrl.searchParams.delete("pack");
+      window.history.replaceState(null, "", cleanUrl.toString());
+    }
+
     // Priority: query param (PWA homescreen / saved) → hash (shared link)
     const idToLoad = queryId || (hashMatch ? hashMatch[1] : null);
 
@@ -1761,31 +1806,14 @@ export default function PasoLive() {
       if (hashMatch && !queryId) {
         window.history.replaceState(null, "", `/?r=${hashMatch[1]}`);
       }
-      // Check if returning from Stripe checkout
-      const justUnlocked = urlParams.get("unlocked") === "true";
       setStep("loadingR");
       loadRoadmap(idToLoad).then((data) => {
         setRoadmap(data.roadmap_json ? (typeof data.roadmap_json === "string" ? JSON.parse(data.roadmap_json) : data.roadmap_json) : data.roadmap);
         setGoal(data.goal);
         setShareId(idToLoad);
         setIsSharedView(true);
-        // Check payment status — if paid (from Supabase) or just returned from Stripe
-        const roadmapPaid = data.paid === true || justUnlocked;
-        if (roadmapPaid) {
-          setIsPaid(true);
-          setUnlocked(true);
-          setBreakdownCredits(-1);
-          if (justUnlocked) {
-            setShowUnlockCelebration(true);
-            // Clean up URL param
-            const cleanUrl = new URL(window.location.href);
-            cleanUrl.searchParams.delete("unlocked");
-            window.history.replaceState(null, "", cleanUrl.toString());
-          }
-        } else {
-          setUnlocked(true);
-          setBreakdownCredits(-1);
-        }
+        setUnlocked(true);
+        setBreakdownCredits(-1);
         if (data.user_name) setUserName(data.user_name);
         if (data.progress && typeof data.progress === "object") {
           const { _credits: savedCredits, ...milestones } = data.progress;
@@ -1937,8 +1965,18 @@ export default function PasoLive() {
 
   const handleGenerate = async () => {
     if (!allAnswered) return;
+    // Check tokens in paid mode
+    if (isPaidMode && tokenBalance < TOKEN_COST_GENERATE) {
+      setShowPackSelection(true);
+      return;
+    }
     setStep("loadingR"); setError(null);
     try {
+      // Deduct tokens before generation
+      if (isPaidMode) {
+        const ok = await deductTokens(TOKEN_COST_GENERATE);
+        if (!ok) { setStep("questions"); return; }
+      }
       const data = await generateRoadmap(goal, Object.values(answers), extras);
       setRoadmap(data); setStep("teaser"); window.scrollTo(0, 0);
     } catch (err) { setError(err.message); setStep("questions"); }
@@ -1947,7 +1985,7 @@ export default function PasoLive() {
   const handleReset = () => {
     setStep("landing"); setRoadmap(null); setQuestions(null); setAnswers({}); setExtras({});
     setInputValue(""); setGoal(""); setError(null); setUnlocked(false); setSelectedPack(null); setHasPurchased(false);
-    setIsPaid(false); setShowUnlockCelebration(false); setCheckoutLoading(false);
+    setShowUnlockCelebration(false); setCheckoutLoading(null); setShowPackSelection(false); setCelebrationPack(null);
     setBreakdownCredits(0); setCheckedMilestones({}); setShowFinale(false);
     setFinaleTriggered(false); setShareId(null); setShareStatus(""); setIsSharedView(false);
     setNudgeSaved(false); setPushStatus("idle"); setUserName("");
@@ -2148,8 +2186,17 @@ export default function PasoLive() {
   // Adjust roadmap — send changes to AI (prompts are server-side)
   const handleAdjust = async () => {
     if (!adjustInput.trim() || adjusting) return;
+    // Check tokens in paid mode
+    if (isPaidMode && tokenBalance < TOKEN_COST_ADJUST) {
+      setShowPackSelection(true);
+      return;
+    }
     setAdjusting(true);
     try {
+      if (isPaidMode) {
+        const ok = await deductTokens(TOKEN_COST_ADJUST);
+        if (!ok) { setAdjusting(false); return; }
+      }
       // Build list of completed milestone texts so AI knows what to preserve
       const completedMilestones = [];
       Object.entries(checkedMilestones).forEach(([key, val]) => {
@@ -2269,7 +2316,20 @@ export default function PasoLive() {
     if (soundEnabled) playRevealChime();
   };
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
+    if (isPaidMode) {
+      if (tokenBalance < TOKEN_COST_GENERATE) {
+        setShowPackSelection(true);
+        return;
+      }
+      const ok = await deductTokens(TOKEN_COST_GENERATE);
+      if (!ok) return;
+      if (soundEnabled) playUnlockSound();
+      setUnlocked(true);
+      setBreakdownCredits(-1);
+      setStep("commitment");
+      return;
+    }
     if (credits <= 0) return;
     const newCredits = credits - 1;
     setCredits(newCredits);
@@ -2277,35 +2337,57 @@ export default function PasoLive() {
     setUnlocked(true);
     setBreakdownCredits(-1);
     setStep("commitment");
-    // Save updated credits
     if (shareId) {
       updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
     }
   };
 
-  // Stripe checkout — redirect to Stripe hosted checkout
-  const handleStripeCheckout = async () => {
-    if (!shareId) return;
-    setCheckoutLoading(true);
+  // Stripe checkout — redirect to Stripe for a token pack
+  const handlePackCheckout = async (pack) => {
+    if (!userId) return;
+    setCheckoutLoading(pack);
     try {
-      // Ensure roadmap is saved first
-      const id = shareId || await ensureSaved();
-      if (!id) { setCheckoutLoading(false); return; }
       const res = await fetch("/api/stripe/checkout", {
         method: "POST",
         headers: API_HEADERS,
-        body: JSON.stringify({ roadmapId: id }),
+        body: JSON.stringify({ pack, userId }),
       });
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
       } else {
         console.error("No checkout URL returned");
-        setCheckoutLoading(false);
+        setCheckoutLoading(null);
       }
     } catch (err) {
       console.error("Checkout error:", err);
-      setCheckoutLoading(false);
+      setCheckoutLoading(null);
+    }
+  };
+
+  // Deduct tokens for an action (returns true if successful, false if insufficient)
+  const deductTokens = async (cost) => {
+    if (!isPaidMode) return true; // free mode — no deduction
+    if (!userId) return false;
+    try {
+      const res = await fetch("/api/tokens", {
+        method: "PATCH",
+        headers: API_HEADERS,
+        body: JSON.stringify({ userId, cost }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTokenBalance(data.tokens);
+        return true;
+      }
+      if (res.status === 402) {
+        // Insufficient tokens — show pack selection
+        setShowPackSelection(true);
+        return false;
+      }
+      return false;
+    } catch {
+      return false;
     }
   };
 
@@ -2315,8 +2397,15 @@ export default function PasoLive() {
     else setBreakdownCredits(-1); // unlimited
   };
 
-  const canBreakdown = breakdownCredits === -1 || breakdownCredits > 0;
-  const useBreakdownCredit = () => {
+  const canBreakdown = !isPaidMode || tokenBalance >= TOKEN_COST_EXPAND || breakdownCredits === -1 || breakdownCredits > 0;
+  const useBreakdownCredit = async () => {
+    if (isPaidMode) {
+      if (tokenBalance < TOKEN_COST_EXPAND) {
+        setShowPackSelection(true);
+        return;
+      }
+      await deductTokens(TOKEN_COST_EXPAND);
+    }
     if (breakdownCredits > 0) setBreakdownCredits((c) => c - 1);
   };
 
@@ -2556,8 +2645,73 @@ export default function PasoLive() {
               You're in.
             </p>
             <p style={{ ...B, fontSize: 16, color: INK45, lineHeight: 1.7, maxWidth: 340, margin: "0 auto" }}>
-              Your full roadmap is ready.
+              {celebrationPack
+                ? `Your ${celebrationPack.name.charAt(0).toUpperCase() + celebrationPack.name.slice(1)} pack is ready \u2014 ${celebrationPack.tokens} tokens added.`
+                : "Your full roadmap is ready."}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Pack selection overlay — shown when tokens run out mid-use */}
+      {showPackSelection && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 998,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          background: isDarkTheme ? "rgba(46,51,80,0.92)" : "rgba(236,233,248,0.92)",
+          backdropFilter: "blur(16px)",
+          animation: "fadeIn 0.4s ease both",
+          padding: 24,
+        }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowPackSelection(false); }}
+        >
+          <div style={{ maxWidth: 540, width: "100%", animation: "slideUp 0.6s cubic-bezier(0.16,1,0.3,1) both" }}>
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <p style={{ fontFamily: H, fontSize: mob ? 22 : 28, fontWeight: 400, color: INK, lineHeight: 1.4, marginBottom: 8 }}>
+                {tokenBalance <= 0 ? "You've used all your tokens" : "Top up your tokens"}
+              </p>
+              <p style={{ ...B, fontSize: 14, color: INK45 }}>
+                {tokenBalance <= 0 ? "Top up to continue your journey." : `You have ${tokenBalance} tokens remaining.`}
+              </p>
+            </div>
+            <div style={{ display: "flex", flexDirection: mob ? "column" : "row", gap: 12, marginBottom: 20 }}>
+              {[
+                { id: "chispa", label: "CHISPA", star: "\u2726", tokens: 8, price: "\u20ac2", tagline: "A spark to get started" },
+                { id: "camino", label: "CAMINO", star: "\u2726\u2726", tokens: 24, price: "\u20ac5", tagline: "Find your path", popular: true },
+                { id: "destino", label: "DESTINO", star: "\u2726\u2726\u2726", tokens: 64, price: "\u20ac10", tagline: "Go the distance" },
+              ].map((pack) => (
+                <button key={pack.id} onClick={() => handlePackCheckout(pack.id)} disabled={checkoutLoading === pack.id}
+                  style={{
+                    flex: 1, padding: "20px 16px", borderRadius: 16, cursor: checkoutLoading === pack.id ? "wait" : "pointer",
+                    border: pack.popular ? `2px solid ${ACCENT}` : "1px solid var(--ink-border)",
+                    background: pack.popular ? "rgba(108,92,231,0.06)" : (isDarkTheme ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.6)"),
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                    transition: "all 0.2s ease", position: "relative",
+                    opacity: checkoutLoading === pack.id ? 0.7 : 1,
+                  }}
+                  onMouseEnter={(e) => { if (!pack.popular) e.currentTarget.style.borderColor = ACCENT; }}
+                  onMouseLeave={(e) => { if (!pack.popular) e.currentTarget.style.borderColor = ""; }}
+                >
+                  {pack.popular && (
+                    <span style={{ ...M, fontSize: 8, letterSpacing: "0.1em", color: "#fff", background: ACCENT, padding: "2px 8px", borderRadius: 6, position: "absolute", top: -8 }}>MOST POPULAR</span>
+                  )}
+                  <span style={{ ...M, fontSize: 10, letterSpacing: "0.1em", color: ACCENT }}>{pack.label} {pack.star}</span>
+                  <span style={{ fontFamily: H, fontSize: 22, fontWeight: 500, color: INK }}>{pack.price}</span>
+                  <span style={{ ...B, fontSize: 13, color: INK50, fontWeight: 600 }}>{pack.tokens} tokens</span>
+                  <span style={{ ...B, fontSize: 11, color: INK25, fontStyle: "italic" }}>{pack.tagline}</span>
+                  <span style={{ ...M, fontSize: 12, letterSpacing: "0.04em", color: ACCENT, marginTop: 6 }}>
+                    {checkoutLoading === pack.id ? "Redirecting..." : "Unlock \u2192"}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p style={{ ...M, fontSize: 10, color: INK22, textAlign: "center", lineHeight: 1.6, marginBottom: 12 }}>
+              Token costs: Generate = {TOKEN_COST_GENERATE} &middot; Expand = {TOKEN_COST_EXPAND} &middot; Adjust = {TOKEN_COST_ADJUST}
+            </p>
+            <button onClick={() => setShowPackSelection(false)}
+              style={{ ...M, fontSize: 12, color: INK30, background: "none", border: "none", cursor: "pointer", display: "block", margin: "0 auto", padding: "8px 16px" }}>
+              Close
+            </button>
           </div>
         </div>
       )}
@@ -2581,9 +2735,11 @@ export default function PasoLive() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {/* Credits pill */}
-            {credits > 0 && step === "roadmap" && (
-              <span style={{ ...M, fontSize: 9, letterSpacing: "0.06em", color: ACCENT, background: "rgba(108,92,231,0.06)", padding: "4px 10px", borderRadius: 8, display: "flex", alignItems: "center", gap: 4 }}>
-                {Icon.check(10, ACCENT)}{credits} credits
+            {step === "roadmap" && (
+              <span style={{ ...M, fontSize: 9, letterSpacing: "0.06em", color: isPaidMode ? ACCENT : INK25, background: isPaidMode ? "rgba(108,92,231,0.06)" : "rgba(0,0,0,0.03)", padding: "4px 10px", borderRadius: 8, display: "flex", alignItems: "center", gap: 4, cursor: isPaidMode ? "pointer" : "default" }}
+                onClick={() => isPaidMode && setShowPackSelection(true)}
+              >
+                {isPaidMode ? `${tokenBalance} tokens` : "Early access \u2014 free"}
               </span>
             )}
             {/* Theme picker */}
@@ -2916,6 +3072,10 @@ export default function PasoLive() {
                 </div>
                 <button
                   onClick={() => {
+                    if (isPaidMode) {
+                      setShowPackSelection(true);
+                      return;
+                    }
                     setFreeTrialStep(prev => Math.max(prev, 2));
                     if (freeTrialRef.current) {
                       freeTrialRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2939,39 +3099,54 @@ export default function PasoLive() {
             <Reveal delay={0.8}>
               <div ref={freeTrialRef} style={{ maxWidth: 480, width: "100%", marginBottom: 24, position: "relative" }}>
 
-                {/* ── STRIPE PAYWALL (when isPaidMode is on) ── */}
-                {isPaidMode && !isPaid && !hasPurchased && (
+                {/* ── PACK SELECTION (when isPaidMode is on) ── */}
+                {isPaidMode && (
                   <Glass dark={isDarkTheme} style={{
-                    padding: mob ? "32px 24px" : "40px 36px",
+                    padding: mob ? "32px 20px" : "40px 36px",
                     animation: "slideUp 0.8s cubic-bezier(0.16,1,0.3,1) both",
                   }}>
                     <div style={{ textAlign: "center", marginBottom: 24 }}>
                       <div style={{ fontSize: 36, marginBottom: 12 }}>{Icon.lock(28, ACCENT)}</div>
                       <p style={{ fontFamily: H, fontSize: mob ? 22 : 28, fontWeight: 400, color: INK, lineHeight: 1.4, marginBottom: 10 }}>
-                        Unlock your full roadmap
+                        Unlock your roadmap
                       </p>
-                      {stripePrice && (
-                        <p style={{ ...M, fontSize: 32, color: ACCENT, fontWeight: 700, marginBottom: 4 }}>
-                          {stripePrice.formatted}
-                        </p>
-                      )}
+                      <p style={{ ...B, fontSize: 14, color: INK45, lineHeight: 1.7 }}>
+                        Choose a pack to continue your journey.
+                      </p>
                     </div>
-                    <button
-                      onClick={handleStripeCheckout}
-                      disabled={checkoutLoading}
-                      style={{
-                        ...M, fontSize: 15, letterSpacing: "0.04em", padding: "16px 32px", borderRadius: 14,
-                        border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
-                        cursor: checkoutLoading ? "wait" : "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
-                        width: "100%", transition: "all 0.3s ease",
-                        opacity: checkoutLoading ? 0.7 : 1,
-                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                      }}
-                    >
-                      {checkoutLoading ? "Redirecting..." : `Unlock for ${stripePrice?.formatted || "..."} \u2192`}
-                    </button>
-                    <p style={{ ...M, fontSize: 11, color: INK30, textAlign: "center", marginTop: 12, lineHeight: 1.5 }}>
-                      One-time payment. Yours forever.
+                    <div style={{ display: "flex", flexDirection: mob ? "column" : "row", gap: 12, marginBottom: 20 }}>
+                      {[
+                        { id: "chispa", label: "CHISPA", star: "\u2726", tokens: 8, price: "\u20ac2", tagline: "A spark to get started" },
+                        { id: "camino", label: "CAMINO", star: "\u2726\u2726", tokens: 24, price: "\u20ac5", tagline: "Find your path", popular: true },
+                        { id: "destino", label: "DESTINO", star: "\u2726\u2726\u2726", tokens: 64, price: "\u20ac10", tagline: "Go the distance" },
+                      ].map((pack) => (
+                        <button key={pack.id} onClick={() => handlePackCheckout(pack.id)} disabled={checkoutLoading === pack.id}
+                          style={{
+                            flex: 1, padding: "20px 16px", borderRadius: 16, cursor: checkoutLoading === pack.id ? "wait" : "pointer",
+                            border: pack.popular ? `2px solid ${ACCENT}` : "1px solid var(--ink-border)",
+                            background: pack.popular ? "rgba(108,92,231,0.06)" : (isDarkTheme ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.6)"),
+                            display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                            transition: "all 0.2s ease", position: "relative",
+                            opacity: checkoutLoading === pack.id ? 0.7 : 1,
+                          }}
+                          onMouseEnter={(e) => { if (!pack.popular) e.currentTarget.style.borderColor = ACCENT; }}
+                          onMouseLeave={(e) => { if (!pack.popular) e.currentTarget.style.borderColor = ""; }}
+                        >
+                          {pack.popular && (
+                            <span style={{ ...M, fontSize: 8, letterSpacing: "0.1em", color: "#fff", background: ACCENT, padding: "2px 8px", borderRadius: 6, position: "absolute", top: -8 }}>MOST POPULAR</span>
+                          )}
+                          <span style={{ ...M, fontSize: 10, letterSpacing: "0.1em", color: ACCENT }}>{pack.label} {pack.star}</span>
+                          <span style={{ fontFamily: H, fontSize: 22, fontWeight: 500, color: INK }}>{pack.price}</span>
+                          <span style={{ ...B, fontSize: 13, color: INK50, fontWeight: 600 }}>{pack.tokens} tokens</span>
+                          <span style={{ ...B, fontSize: 11, color: INK25, fontStyle: "italic" }}>{pack.tagline}</span>
+                          <span style={{ ...M, fontSize: 12, letterSpacing: "0.04em", color: ACCENT, marginTop: 6 }}>
+                            {checkoutLoading === pack.id ? "Redirecting..." : "Unlock \u2192"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ ...M, fontSize: 10, color: INK22, textAlign: "center", lineHeight: 1.6 }}>
+                      Token costs: Generate = {TOKEN_COST_GENERATE} &middot; Expand = {TOKEN_COST_EXPAND} &middot; Adjust = {TOKEN_COST_ADJUST}
                     </p>
                   </Glass>
                 )}
@@ -3080,8 +3255,8 @@ export default function PasoLive() {
                   </Glass>
                 )}
 
-                {/* After free trial activated — unlock button */}
-                {hasPurchased && (
+                {/* After free trial activated — unlock button (free mode only) */}
+                {!isPaidMode && hasPurchased && (
                   <Glass dark={isDarkTheme} style={{ padding: mob ? "28px 24px" : "32px 36px", animation: "slideUp 0.5s ease both" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", marginBottom: 12 }}>
                       {Icon.check(14, "#00b894")}
@@ -3154,7 +3329,7 @@ export default function PasoLive() {
             </Reveal>
             <Reveal delay={1.2}>
               <p style={{ ...M, fontSize: 10, color: INK22, marginTop: 20 }}>
-                {credits} credits remaining
+                {isPaidMode ? `${tokenBalance} tokens remaining` : `${credits} credits remaining`}
               </p>
             </Reveal>
           </div>
