@@ -148,6 +148,7 @@ export async function PATCH(request) {
     const allowed = [
       "progress", "nudge_enabled", "nudge_frequency",
       "push_subscription", "user_name", "roadmap",
+      "paid", "paid_at", "stripe_session_id", "stripe_customer_email", "stripe_amount",
     ];
     const safeUpdates = {};
     for (const key of allowed) {

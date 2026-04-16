@@ -1597,6 +1597,12 @@ export default function PasoLive() {
   const [isSharedView, setIsSharedView] = useState(false);
   const [showInstallTip, setShowInstallTip] = useState(false);
 
+  // Stripe / paid mode
+  const [isPaidMode, setIsPaidMode] = useState(false); // false = freeMode (default), true = Stripe paywall
+  const [stripePrice, setStripePrice] = useState(null); // { amount, currency, formatted }
+  const [isPaid, setIsPaid] = useState(false); // true if this roadmap has been paid for
+  const [showUnlockCelebration, setShowUnlockCelebration] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
   // Adjust roadmap
   const [showAdjust, setShowAdjust] = useState(false);
@@ -1716,6 +1722,28 @@ export default function PasoLive() {
   // Fetch live roadmap count
   useEffect(() => { fetchRoadmapCount().then((n) => { if (n > 0) setLiveCount(n); }); }, []);
 
+  // Fetch payment config from Numina Labs admin
+  useEffect(() => {
+    (async () => {
+      try {
+        const configRes = await fetch("https://numinalabs.app/api/config");
+        if (configRes.ok) {
+          const config = await configRes.json();
+          const freeMode = config?.paso?.freeMode !== false; // default true
+          setIsPaidMode(!freeMode);
+          if (!freeMode) {
+            // Fetch Stripe price for display
+            const priceRes = await fetch("/api/stripe/price");
+            if (priceRes.ok) {
+              const priceData = await priceRes.json();
+              setStripePrice(priceData);
+            }
+          }
+        }
+      } catch { /* config unavailable — stay in free mode */ }
+    })();
+  }, []);
+
   // Check URL for shared roadmap on mount — only ?r= query param or #/r/ hash
   // NO localStorage — each roadmap is accessed only by its URL.
   // PWA homescreen uses ?r= (browser URL saved by iOS), shared links use #/r/
@@ -1733,14 +1761,31 @@ export default function PasoLive() {
       if (hashMatch && !queryId) {
         window.history.replaceState(null, "", `/?r=${hashMatch[1]}`);
       }
+      // Check if returning from Stripe checkout
+      const justUnlocked = urlParams.get("unlocked") === "true";
       setStep("loadingR");
       loadRoadmap(idToLoad).then((data) => {
         setRoadmap(data.roadmap_json ? (typeof data.roadmap_json === "string" ? JSON.parse(data.roadmap_json) : data.roadmap_json) : data.roadmap);
         setGoal(data.goal);
         setShareId(idToLoad);
         setIsSharedView(true);
-        setUnlocked(true);
-        setBreakdownCredits(-1);
+        // Check payment status — if paid (from Supabase) or just returned from Stripe
+        const roadmapPaid = data.paid === true || justUnlocked;
+        if (roadmapPaid) {
+          setIsPaid(true);
+          setUnlocked(true);
+          setBreakdownCredits(-1);
+          if (justUnlocked) {
+            setShowUnlockCelebration(true);
+            // Clean up URL param
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete("unlocked");
+            window.history.replaceState(null, "", cleanUrl.toString());
+          }
+        } else {
+          setUnlocked(true);
+          setBreakdownCredits(-1);
+        }
         if (data.user_name) setUserName(data.user_name);
         if (data.progress && typeof data.progress === "object") {
           const { _credits: savedCredits, ...milestones } = data.progress;
@@ -1901,7 +1946,8 @@ export default function PasoLive() {
 
   const handleReset = () => {
     setStep("landing"); setRoadmap(null); setQuestions(null); setAnswers({}); setExtras({});
-    setInputValue(""); setGoal(""); setError(null); setUnlocked(false); setSelectedPack(null); setHasPurchased(false); 
+    setInputValue(""); setGoal(""); setError(null); setUnlocked(false); setSelectedPack(null); setHasPurchased(false);
+    setIsPaid(false); setShowUnlockCelebration(false); setCheckoutLoading(false);
     setBreakdownCredits(0); setCheckedMilestones({}); setShowFinale(false);
     setFinaleTriggered(false); setShareId(null); setShareStatus(""); setIsSharedView(false);
     setNudgeSaved(false); setPushStatus("idle"); setUserName("");
@@ -2175,6 +2221,14 @@ export default function PasoLive() {
     if (soundEnabled) playRevealChime();
   };
 
+  // Auto-dismiss unlock celebration after 2.5s
+  useEffect(() => {
+    if (showUnlockCelebration) {
+      const t = setTimeout(() => setShowUnlockCelebration(false), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [showUnlockCelebration]);
+
   // Free trial — auto-animate pricing → free trial card
   useEffect(() => {
     if (step === "teaser" && freeTrialStep === 0) {
@@ -2226,6 +2280,32 @@ export default function PasoLive() {
     // Save updated credits
     if (shareId) {
       updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
+    }
+  };
+
+  // Stripe checkout — redirect to Stripe hosted checkout
+  const handleStripeCheckout = async () => {
+    if (!shareId) return;
+    setCheckoutLoading(true);
+    try {
+      // Ensure roadmap is saved first
+      const id = shareId || await ensureSaved();
+      if (!id) { setCheckoutLoading(false); return; }
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: API_HEADERS,
+        body: JSON.stringify({ roadmapId: id }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        console.error("No checkout URL returned");
+        setCheckoutLoading(false);
+      }
+    } catch (err) {
+      console.error("Checkout error:", err);
+      setCheckoutLoading(false);
     }
   };
 
@@ -2426,6 +2506,7 @@ export default function PasoLive() {
         @keyframes skeletonShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
         @keyframes bubbleBurst{0%{transform:translate(0,0) scale(0);opacity:0}12%{transform:translate(calc(var(--midX) * 0.4),calc(var(--midY) * 0.4)) scale(1.1);opacity:1}50%{transform:translate(var(--midX),var(--midY)) scale(1);opacity:0.9}80%{opacity:0.4}100%{transform:translate(var(--endX),var(--endY)) scale(0.3);opacity:0}}
         @keyframes scrollHint{0%,100%{opacity:0.4;transform:translateY(0)}50%{opacity:1;transform:translateY(6px)}}
+        @keyframes celebPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
       `}</style>
 
       {/* Ambient */}
@@ -2456,6 +2537,27 @@ export default function PasoLive() {
             boxShadow: "0 4px 16px rgba(0,0,0,0.06)",
           }}>
             You're offline — your roadmap is still here, but some features need a connection
+          </div>
+        </div>
+      )}
+
+      {/* Unlock celebration — after Stripe payment */}
+      {showUnlockCelebration && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 999,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          background: isDarkTheme ? "rgba(46,51,80,0.95)" : "rgba(236,233,248,0.95)",
+          backdropFilter: "blur(20px)",
+          animation: "fadeIn 0.6s ease both",
+        }}>
+          <div style={{ textAlign: "center", animation: "slideUp 0.8s cubic-bezier(0.16,1,0.3,1) 0.2s both" }}>
+            <div style={{ fontSize: 48, marginBottom: 20, animation: "celebPulse 1.5s ease infinite" }}>{"\u2728"}</div>
+            <p style={{ fontFamily: H, fontSize: mob ? 24 : 32, fontWeight: 400, color: INK, lineHeight: 1.4, marginBottom: 10 }}>
+              You're in.
+            </p>
+            <p style={{ ...B, fontSize: 16, color: INK45, lineHeight: 1.7, maxWidth: 340, margin: "0 auto" }}>
+              Your full roadmap is ready.
+            </p>
           </div>
         </div>
       )}
@@ -2833,11 +2935,50 @@ export default function PasoLive() {
               </div>
             </Reveal>
 
-            {/* Payment → Free trial animated sequence */}
+            {/* Payment section — Stripe paywall OR free trial */}
             <Reveal delay={0.8}>
               <div ref={freeTrialRef} style={{ maxWidth: 480, width: "100%", marginBottom: 24, position: "relative" }}>
+
+                {/* ── STRIPE PAYWALL (when isPaidMode is on) ── */}
+                {isPaidMode && !isPaid && !hasPurchased && (
+                  <Glass dark={isDarkTheme} style={{
+                    padding: mob ? "32px 24px" : "40px 36px",
+                    animation: "slideUp 0.8s cubic-bezier(0.16,1,0.3,1) both",
+                  }}>
+                    <div style={{ textAlign: "center", marginBottom: 24 }}>
+                      <div style={{ fontSize: 36, marginBottom: 12 }}>{Icon.lock(28, ACCENT)}</div>
+                      <p style={{ fontFamily: H, fontSize: mob ? 22 : 28, fontWeight: 400, color: INK, lineHeight: 1.4, marginBottom: 10 }}>
+                        Unlock your full roadmap
+                      </p>
+                      {stripePrice && (
+                        <p style={{ ...M, fontSize: 32, color: ACCENT, fontWeight: 700, marginBottom: 4 }}>
+                          {stripePrice.formatted}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleStripeCheckout}
+                      disabled={checkoutLoading}
+                      style={{
+                        ...M, fontSize: 15, letterSpacing: "0.04em", padding: "16px 32px", borderRadius: 14,
+                        border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
+                        cursor: checkoutLoading ? "wait" : "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
+                        width: "100%", transition: "all 0.3s ease",
+                        opacity: checkoutLoading ? 0.7 : 1,
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      }}
+                    >
+                      {checkoutLoading ? "Redirecting..." : `Unlock for ${stripePrice?.formatted || "..."} \u2192`}
+                    </button>
+                    <p style={{ ...M, fontSize: 11, color: INK30, textAlign: "center", marginTop: 12, lineHeight: 1.5 }}>
+                      One-time payment. Yours forever.
+                    </p>
+                  </Glass>
+                )}
+
+                {/* ── FREE TRIAL FLOW (when freeMode is on) ── */}
                 {/* Step 1: Show pricing briefly, then fade */}
-                {freeTrialStep <= 1 && (
+                {!isPaidMode && freeTrialStep <= 1 && (
                   <Glass dark={isDarkTheme} style={{
                     padding: mob ? "28px 24px" : "32px 36px",
                     opacity: freeTrialStep === 1 ? 0 : 1,
@@ -2868,8 +3009,8 @@ export default function PasoLive() {
                   </Glass>
                 )}
 
-                {/* Step 2: Free trial card slides in */}
-                {freeTrialStep >= 2 && !hasPurchased && (
+                {/* Step 2: Free trial card slides in (free mode only) */}
+                {!isPaidMode && freeTrialStep >= 2 && !hasPurchased && (
                   <Glass dark={isDarkTheme} style={{
                     padding: mob ? "32px 24px" : "40px 36px",
                     animation: "slideUp 0.8s cubic-bezier(0.16,1,0.3,1) both",
