@@ -1580,6 +1580,7 @@ export default function PasoLive() {
   const [credits, setCredits] = useState(0);
   const [selectedPack, setSelectedPack] = useState(null);
   const [hasPurchased, setHasPurchased] = useState(false);
+  const [purchasing, setPurchasing] = useState(false);
   const [checkedMilestones, setCheckedMilestones] = useState({});
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [bgTheme, setBgTheme] = useState("aurora");
@@ -1678,6 +1679,30 @@ export default function PasoLive() {
 
   // Fetch live roadmap count
   useEffect(() => { fetchRoadmapCount().then((n) => { if (n > 0) setLiveCount(n); }); }, []);
+
+  // Handle Stripe checkout return
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const purchased = params.get("purchased");
+    const creditStr = params.get("credits");
+    if (purchased && creditStr) {
+      const amount = parseInt(creditStr, 10);
+      if (amount > 0) {
+        setCredits((prev) => {
+          const newCredits = prev + amount;
+          if (shareId) updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
+          return newCredits;
+        });
+        setHasPurchased(true);
+        if (soundEnabled) playRevealChime();
+      }
+      const url = new URL(window.location);
+      url.searchParams.delete("purchased");
+      url.searchParams.delete("credits");
+      url.searchParams.delete("cancelled");
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    }
+  }, []);
 
   // Check URL for shared roadmap on mount — only ?r= query param or #/r/ hash
   // NO localStorage — each roadmap is accessed only by its URL.
@@ -2103,20 +2128,25 @@ export default function PasoLive() {
     setSelectedPack(packId);
   };
 
-  const handleConfirmPurchase = () => {
-    if (!selectedPack || hasPurchased) return;
-    const amount = CREDIT_PACKS[selectedPack] || 0;
-    // FAKE PAYWALL - replace with Stripe checkout later
-    setCredits((prev) => {
-      const newCredits = prev + amount;
-      // Save credits to Supabase immediately if roadmap is saved
-      if (shareId) {
-        updateProgress(shareId, { ...checkedMilestones, _credits: newCredits });
+  const handleConfirmPurchase = async () => {
+    if (!selectedPack || hasPurchased || purchasing) return;
+    setPurchasing(true);
+    try {
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packId: selectedPack, returnUrl: window.location.origin }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || "Failed to start checkout");
       }
-      return newCredits;
-    });
-    setHasPurchased(true);
-    if (soundEnabled) playRevealChime();
+    } catch (e) {
+      console.error("Checkout error:", e);
+      setPurchasing(false);
+    }
   };
 
   const handleUnlock = () => {
@@ -2729,17 +2759,17 @@ export default function PasoLive() {
                     })}
                   </div>
                   {selectedPack && (
-                    <button onClick={handleConfirmPurchase} style={{
+                    <button onClick={handleConfirmPurchase} disabled={purchasing} style={{
                       ...M, fontSize: 13, letterSpacing: "0.04em", padding: "15px 32px", borderRadius: 14,
-                      border: "none", background: ACCENT, color: "#fff", fontWeight: 600,
-                      cursor: "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
+                      border: "none", background: purchasing ? INK30 : ACCENT, color: "#fff", fontWeight: 600,
+                      cursor: purchasing ? "wait" : "pointer", boxShadow: "0 4px 24px rgba(108,92,231,0.3)",
                       width: "100%", marginTop: 16, transition: "all 0.3s ease",
                       animation: "slideUp 0.3s ease both",
                     }}>
-                      Get {CREDIT_PACKS[selectedPack]} credits &rarr;
+                      {purchasing ? "Redirecting to checkout…" : <>Get {CREDIT_PACKS[selectedPack]} credits &rarr;</>}
                     </button>
                   )}
-                  <p style={{ ...M, fontSize: 9, color: INK22, textAlign: "center", marginTop: 14, letterSpacing: "0.04em" }}>Secure checkout coming soon.</p>
+                  <p style={{ ...M, fontSize: 9, color: INK22, textAlign: "center", marginTop: 14, letterSpacing: "0.04em" }}>Secure payment via Stripe &middot; iDEAL &amp; card accepted</p>
                 </>) : (
                   <div style={{ animation: "slideUp 0.5s ease both" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 0", marginBottom: 12 }}>
