@@ -624,7 +624,10 @@ const INK12 = "var(--ink12)";
 const INK08 = "var(--ink08)";
 
 /* ─── API — prompts are server-side in /api/generate ─── */
-async function callAPI(action, data, _retry = true) {
+// The paywall is enforced server-side in /api/generate: pass userId + cost and
+// the route deducts atomically before generating. onTokens receives the new
+// balance from the response so the UI stays in sync (no separate deduct call).
+async function callAPI(action, data, opts = {}, _retry = true) {
   try {
     const res = await fetch("/api/generate", {
       method: "POST",
@@ -633,9 +636,12 @@ async function callAPI(action, data, _retry = true) {
     });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({}));
-      throw new Error(errData?.error || `API error: ${res.status}`);
+      const err = new Error(errData?.error || `API error: ${res.status}`);
+      err.status = res.status;
+      throw err;
     }
     const resp = await res.json();
+    if (typeof resp.tokens === "number" && opts.onTokens) opts.onTokens(resp.tokens);
     const text = resp.content.map((c) => c.text || "").join("");
     const firstBrace = text.indexOf("{");
     const lastBrace = text.lastIndexOf("}");
@@ -644,20 +650,26 @@ async function callAPI(action, data, _retry = true) {
     }
     return JSON.parse(text.substring(firstBrace, lastBrace + 1));
   } catch (e) {
-    if (_retry) {
+    // Don't retry a paywall rejection — the balance won't change on retry.
+    if (_retry && e.status !== 402) {
       console.warn("Retrying API call:", e.message);
-      return callAPI(action, data, false);
+      return callAPI(action, data, opts, false);
     }
+    if (e.status === 402) throw e;
     console.error("API failed after retry:", e.message);
     throw new Error("We hit a snag. Give it one more try — these things happen.");
   }
 }
 
-async function generateQuestions(goal) {
-  return callAPI("questions", { goal: sanitize(goal, 500) });
+// meta carries the paywall fields ({ userId, cost }) plus an optional onTokens
+// callback; onTokens is pulled out so it isn't serialized into the request body.
+async function generateQuestions(goal, meta = {}) {
+  const { onTokens, ...paywall } = meta;
+  return callAPI("questions", { goal: sanitize(goal, 500), ...paywall }, { onTokens });
 }
 
-async function generateRoadmap(goal, answers, extras) {
+async function generateRoadmap(goal, answers, extras, meta = {}) {
+  const { onTokens, ...paywall } = meta;
   return callAPI("roadmap", {
     goal: sanitize(goal, 500),
     answers: answers.map((a) => ({
@@ -666,10 +678,12 @@ async function generateRoadmap(goal, answers, extras) {
       answer: a.answer,
     })),
     extras,
-  });
+    ...paywall,
+  }, { onTokens });
 }
 
-async function breakdownPhase(goal, phase, mode) {
+async function breakdownPhase(goal, phase, mode, meta = {}) {
+  const { onTokens, ...paywall } = meta;
   return callAPI("breakdown", {
     goal: sanitize(goal, 500),
     phase: {
@@ -680,16 +694,19 @@ async function breakdownPhase(goal, phase, mode) {
       actions: phase.actions,
     },
     mode,
-  });
+    ...paywall,
+  }, { onTokens });
 }
 
-async function adjustRoadmap(goal, roadmap, adjustInput, completedMilestones) {
+async function adjustRoadmap(goal, roadmap, adjustInput, completedMilestones, meta = {}) {
+  const { onTokens, ...paywall } = meta;
   return callAPI("adjust", {
     goal: sanitize(goal, 500),
     roadmap,
     adjustInput: sanitize(adjustInput, 1000),
     completedMilestones,
-  });
+    ...paywall,
+  }, { onTokens });
 }
 
 /* ─── CHECKABLE MILESTONE ─── */
@@ -857,7 +874,7 @@ function BubbleCelebration({ active }) {
 }
 
 /* ─── PHASE SECTION (FULL / UNLOCKED) ─── */
-function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone, canBreakdown, onUseCredit, onBuyBreakdown }) {
+function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone, canBreakdown, onUseCredit, onBuyBreakdown, breakdownMeta }) {
   const [ref, inView] = useInView();
   const mob = useIsMobile();
   const isEven = index % 2 === 0;
@@ -944,7 +961,7 @@ function PhaseSection({ phase, index, goal, checkedMilestones, onToggleMilestone
     setBreakdownLoading(true);
     setBreakdownError(null);
     try {
-      const data = await breakdownPhase(goal, phase, mode);
+      const data = await breakdownPhase(goal, phase, mode, breakdownMeta);
       setBreakdownData(data);
       playBreakdownDone();
     } catch (e) {
@@ -1977,7 +1994,9 @@ export default function PasoLive() {
         const ok = await deductTokens(TOKEN_COST_GENERATE);
         if (!ok) { setStep("questions"); return; }
       }
-      const data = await generateRoadmap(goal, Object.values(answers), extras);
+      const data = await generateRoadmap(goal, Object.values(answers), extras, {
+        userId, cost: isPaidMode ? TOKEN_COST_GENERATE : 0, onTokens: setTokenBalance,
+      });
       setRoadmap(data); setStep("teaser"); window.scrollTo(0, 0);
     } catch (err) { setError(err.message); setStep("questions"); }
   };
@@ -2208,7 +2227,9 @@ export default function PasoLive() {
         }
       });
 
-      const parsed = await adjustRoadmap(goal, roadmap, adjustInput, completedMilestones);
+      const parsed = await adjustRoadmap(goal, roadmap, adjustInput, completedMilestones, {
+        userId, cost: isPaidMode ? TOKEN_COST_ADJUST : 0, onTokens: setTokenBalance,
+      });
 
       // Check if AI flagged it as a new goal
       if (parsed.error === "NEW_GOAL") {
@@ -2365,30 +2386,19 @@ export default function PasoLive() {
     }
   };
 
-  // Deduct tokens for an action (returns true if successful, false if insufficient)
-  const deductTokens = async (cost) => {
-    if (!isPaidMode) return true; // free mode — no deduction
+  // Client-side balance gate (returns true if the action may proceed).
+  // The actual deduction is enforced server-side in /api/generate — this only
+  // pre-checks the local balance so we can show the pack-selection prompt
+  // before kicking off a generation. No /api/tokens PATCH here: deducting both
+  // client- and server-side would double-charge.
+  const deductTokens = (cost) => {
+    if (!isPaidMode) return true; // free mode — no paywall
     if (!userId) return false;
-    try {
-      const res = await fetch("/api/tokens", {
-        method: "PATCH",
-        headers: API_HEADERS,
-        body: JSON.stringify({ userId, cost }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setTokenBalance(data.tokens);
-        return true;
-      }
-      if (res.status === 402) {
-        // Insufficient tokens — show pack selection
-        setShowPackSelection(true);
-        return false;
-      }
-      return false;
-    } catch {
+    if (tokenBalance < cost) {
+      setShowPackSelection(true);
       return false;
     }
+    return true;
   };
 
   const handleBuyBreakdown = (type) => {
@@ -3497,7 +3507,8 @@ export default function PasoLive() {
                 {i > 0 && <div style={{ height: 1, background: "linear-gradient(90deg, transparent, var(--ink-divider), transparent)" }} />}
                 <PhaseSection phase={phase} index={i} goal={roadmap.goal}
                     checkedMilestones={checkedMilestones} onToggleMilestone={toggleMilestone}
-                    canBreakdown={canBreakdown} onUseCredit={useBreakdownCredit} onBuyBreakdown={handleBuyBreakdown} />
+                    canBreakdown={canBreakdown} onUseCredit={useBreakdownCredit} onBuyBreakdown={handleBuyBreakdown}
+                    breakdownMeta={{ userId, cost: isPaidMode ? TOKEN_COST_EXPAND : 0, onTokens: setTokenBalance }} />
               </div>
             ))}
 

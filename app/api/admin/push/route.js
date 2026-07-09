@@ -28,7 +28,7 @@ export async function POST(req) {
 
     const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
     const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
-    const vapidEmail = process.env.VAPID_EMAIL || "mailto:hello@numinlabs.com";
+    const vapidEmail = process.env.VAPID_EMAIL || "mailto:hello@numinalabs.app";
 
     if (!vapidPublic || !vapidPrivate) {
       return Response.json({ error: "VAPID keys not configured" }, { status: 500 });

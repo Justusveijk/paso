@@ -8,6 +8,32 @@ import { apiGuard, handleCORS } from "@/lib/api-guard";
 
 const client = new Anthropic(); // uses ANTHROPIC_API_KEY env var
 
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+const supabaseHeaders = {
+  apikey: SUPABASE_KEY,
+  Authorization: `Bearer ${SUPABASE_KEY}`,
+  "Content-Type": "application/json",
+};
+
+// Default token cost per action (used when the request omits an explicit cost)
+const DEFAULT_COST = { questions: 0, roadmap: 1, breakdown: 1, adjust: 1, raw: 0 };
+
+// PASO reads freeMode from the admin config — same source the frontend uses
+// (app/paso.jsx). When free mode is on we skip the token paywall entirely.
+// Fail open to free mode if the config can't be reached, matching the frontend.
+async function isFreeMode() {
+  try {
+    const res = await fetch("https://numinalabs.app/api/config", { cache: "no-store" });
+    if (res.ok) {
+      const config = await res.json();
+      return config?.paso?.freeMode !== false;
+    }
+  } catch { /* fall through */ }
+  return true;
+}
+
 // Handle CORS preflight
 export async function OPTIONS(request) {
   return handleCORS(request);
@@ -191,14 +217,42 @@ export async function POST(request) {
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
     }
 
+    // ─── SERVER-SIDE PAYWALL ───
+    // Enforce token balance here so it can't be bypassed by skipping the
+    // frontend deduct or hitting this route directly. Deduct BEFORE calling
+    // Anthropic; if the user can't afford it, bail with 402 and never generate.
+    const userId = typeof body.userId === "string" ? body.userId : null;
+    const cost = Number.isInteger(body.cost) && body.cost >= 0
+      ? body.cost
+      : (DEFAULT_COST[action] ?? 0);
+
+    let tokens = null; // new balance, surfaced to the frontend below
+    if (cost > 0 && !(await isFreeMode())) {
+      if (!userId) {
+        return NextResponse.json({ error: "Missing userId" }, { status: 400 });
+      }
+      // deduct_tokens(p_user_id, p_cost) atomically decrements and returns the
+      // new balance, or -1 if the user has insufficient tokens (no race).
+      const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/deduct_tokens`, {
+        method: "POST",
+        headers: supabaseHeaders,
+        body: JSON.stringify({ p_user_id: userId, p_cost: cost }),
+      });
+      const newBalance = await rpcRes.json();
+      if (newBalance === -1) {
+        return NextResponse.json({ error: "Insufficient tokens" }, { status: 402 });
+      }
+      tokens = newBalance;
+    }
+
     const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: prompt.maxTokens,
       system: prompt.system,
       messages: [{ role: "user", content: prompt.user }],
     });
 
-    return NextResponse.json(message);
+    return NextResponse.json({ ...message, tokens });
   } catch (error) {
     console.error("Generate API error:", error);
     return NextResponse.json(

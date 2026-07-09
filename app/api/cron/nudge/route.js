@@ -20,7 +20,7 @@ export async function GET(req) {
 
   const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
-  const vapidEmail = process.env.VAPID_EMAIL || "mailto:hello@numinlabs.com";
+  const vapidEmail = process.env.VAPID_EMAIL || "mailto:hello@numinalabs.app";
 
   if (!vapidPublic || !vapidPrivate || !SUPABASE_URL || !SUPABASE_KEY) {
     return Response.json({ error: "Missing env vars" }, { status: 500 });

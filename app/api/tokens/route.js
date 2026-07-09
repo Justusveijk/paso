@@ -56,29 +56,21 @@ export async function PATCH(request) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    // Get current balance
-    const getRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_tokens?user_id=eq.${encodeURIComponent(userId)}&select=tokens`,
-      { headers }
-    );
-    const rows = await getRes.json();
-    const current = rows[0]?.tokens ?? 0;
+    // Atomic decrement — deduct_tokens(p_user_id, p_cost) returns the new
+    // balance, or -1 if insufficient. Single statement, no read-check-write
+    // race (two parallel requests can no longer double-spend).
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/deduct_tokens`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ p_user_id: userId, p_cost: cost }),
+    });
+    const newBalance = await res.json();
 
-    if (current < cost) {
-      return NextResponse.json({ error: "Insufficient tokens", tokens: current }, { status: 402 });
+    if (newBalance === -1) {
+      return NextResponse.json({ error: "Insufficient tokens" }, { status: 402 });
     }
 
-    // Deduct
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/user_tokens?user_id=eq.${encodeURIComponent(userId)}`,
-      {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ tokens: current - cost }),
-      }
-    );
-
-    return NextResponse.json({ tokens: current - cost });
+    return NextResponse.json({ tokens: newBalance });
   } catch (error) {
     console.error("Token deduct error:", error);
     return NextResponse.json({ error: "Failed to deduct tokens" }, { status: 500 });
